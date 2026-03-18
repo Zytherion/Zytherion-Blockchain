@@ -1,0 +1,7 @@
+syntax = "proto3";
+package zytherion.zytherion;
+
+option go_package = "zytherion/x/zytherion/types";
+
+// Msg defines the Msg service.
+service Msg {}
