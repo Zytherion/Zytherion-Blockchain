@@ -57,7 +57,7 @@ func NewRootCmd() (*cobra.Command, appparams.EncodingConfig) {
 
 	rootCmd := &cobra.Command{
 		Use:   app.Name + "d",
-		Short: "Start zytherion node",
+		Short: "Zytherion: The First PQC + FHE Privacy Blockchain",
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
@@ -360,7 +360,7 @@ func initAppConfig() (string, interface{}) {
 	//   own app.toml to override, or use this default value.
 	//
 	// In simapp, we set the min gas prices to 0.
-	srvCfg.MinGasPrices = "0stake"
+	srvCfg.MinGasPrices = "0zytc"
 
 	customAppConfig := CustomAppConfig{
 		Config: *srvCfg,

@@ -1,0 +1,12 @@
+syntax = "proto3";
+package zytherion.privacy;
+
+import "gogoproto/gogo.proto";
+import "zytherion/privacy/params.proto";
+
+option go_package = "zytherion/x/privacy/types";
+
+// GenesisState defines the privacy module's genesis state.
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+}

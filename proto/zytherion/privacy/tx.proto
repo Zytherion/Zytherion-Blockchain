@@ -1,0 +1,7 @@
+syntax = "proto3";
+package zytherion.privacy;
+
+option go_package = "zytherion/x/privacy/types";
+
+// Msg defines the Msg service.
+service Msg {}

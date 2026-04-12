@@ -1,0 +1,12 @@
+syntax = "proto3";
+package zytherion.privacy;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "zytherion/x/privacy/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (gogoproto.goproto_stringer) = false;
+  
+}

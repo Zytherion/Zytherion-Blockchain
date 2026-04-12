@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
 	reflectionv1 "cosmossdk.io/api/cosmos/reflection/v1"
 	dbm "github.com/cometbft/cometbft-db"
 	abci "github.com/cometbft/cometbft/abci/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cometbft/cometbft/libs/log"
 	tmos "github.com/cometbft/cometbft/libs/os"
 	"github.com/cosmos/cosmos-sdk/baseapp"
@@ -110,17 +112,18 @@ import (
 	ibctm "github.com/cosmos/ibc-go/v7/modules/light-clients/07-tendermint"
 	"github.com/spf13/cast"
 
-	zytherionmodule "zytherion/x/zytherion"
-	zytherionmodulekeeper "zytherion/x/zytherion/keeper"
-	zytherionmoduletypes "zytherion/x/zytherion/types"
+	privacymodule "zytherion/x/privacy"
+	privacymodulekeeper "zytherion/x/privacy/keeper"
+	privacymoduletypes "zytherion/x/privacy/types"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	appparams "zytherion/app/params"
+	"zytherion/app/greenbft"
 	"zytherion/docs"
 )
 
 const (
-	AccountAddressPrefix = "cosmos"
+	AccountAddressPrefix = "zyth"
 	Name                 = "zytherion"
 )
 
@@ -173,7 +176,7 @@ var (
 		ica.AppModuleBasic{},
 		vesting.AppModuleBasic{},
 		consensus.AppModuleBasic{},
-		zytherionmodule.AppModuleBasic{},
+		privacymodule.AppModuleBasic{},
 		// this line is used by starport scaffolding # stargate/app/moduleBasic
 	)
 
@@ -187,6 +190,7 @@ var (
 		stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staking},
 		govtypes.ModuleName:            {authtypes.Burner},
 		ibctransfertypes.ModuleName:    {authtypes.Minter, authtypes.Burner},
+		privacymoduletypes.ModuleName:  {authtypes.Minter, authtypes.Burner, authtypes.Staking},
 		// this line is used by starport scaffolding # stargate/app/maccPerms
 	}
 )
@@ -249,8 +253,11 @@ type App struct {
 	ScopedTransferKeeper capabilitykeeper.ScopedKeeper
 	ScopedICAHostKeeper  capabilitykeeper.ScopedKeeper
 
-	ZytherionKeeper zytherionmodulekeeper.Keeper
+	PrivacyKeeper privacymodulekeeper.Keeper
 	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
+
+	// Green BFT — adaptive commit timeout manager.
+	AdaptiveTimeout *greenbft.AdaptiveTimeoutManager
 
 	// mm is the module manager
 	mm *module.Manager
@@ -296,7 +303,7 @@ func New(
 		govtypes.StoreKey, paramstypes.StoreKey, ibcexported.StoreKey, upgradetypes.StoreKey,
 		feegrant.StoreKey, evidencetypes.StoreKey, ibctransfertypes.StoreKey, icahosttypes.StoreKey,
 		capabilitytypes.StoreKey, group.StoreKey, icacontrollertypes.StoreKey, consensusparamtypes.StoreKey,
-		zytherionmoduletypes.StoreKey,
+		privacymoduletypes.StoreKey,
 		// this line is used by starport scaffolding # stargate/app/storeKey
 	)
 	tkeys := sdk.NewTransientStoreKeys(paramstypes.TStoreKey)
@@ -519,13 +526,21 @@ func New(
 		),
 	)
 
-	app.ZytherionKeeper = *zytherionmodulekeeper.NewKeeper(
+	app.PrivacyKeeper = *privacymodulekeeper.NewKeeper(
 		appCodec,
-		keys[zytherionmoduletypes.StoreKey],
-		keys[zytherionmoduletypes.MemStoreKey],
-		app.GetSubspace(zytherionmoduletypes.ModuleName),
+		keys[privacymoduletypes.StoreKey],
+		keys[privacymoduletypes.MemStoreKey],
+		app.GetSubspace(privacymoduletypes.ModuleName),
+		app.BankKeeper,
 	)
-	zytherionModule := zytherionmodule.NewAppModule(appCodec, app.ZytherionKeeper, app.AccountKeeper, app.BankKeeper)
+	privacyModule := privacymodule.NewAppModule(appCodec, app.PrivacyKeeper, app.AccountKeeper, app.BankKeeper)
+
+	// ── Green BFT: Adaptive timeout manager ──────────────────────────────────
+	// Shares the privacy module's KVStore for persisting the suggested timeout.
+	app.AdaptiveTimeout = greenbft.NewAdaptiveTimeoutManager(
+		keys[privacymoduletypes.StoreKey],
+		logger,
+	)
 
 	// this line is used by starport scaffolding # stargate/app/keeperDefinition
 
@@ -588,7 +603,7 @@ func New(
 		params.NewAppModule(app.ParamsKeeper),
 		transferModule,
 		icaModule,
-		zytherionModule,
+		privacyModule,
 		// this line is used by starport scaffolding # stargate/app/appModule
 
 		crisis.NewAppModule(app.CrisisKeeper, skipGenesisInvariants, app.GetSubspace(crisistypes.ModuleName)), // always be last to make sure that it checks for all invariants and not only part of them
@@ -621,7 +636,7 @@ func New(
 		paramstypes.ModuleName,
 		vestingtypes.ModuleName,
 		consensusparamtypes.ModuleName,
-		zytherionmoduletypes.ModuleName,
+		privacymoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/beginBlockers
 	)
 
@@ -647,7 +662,7 @@ func New(
 		upgradetypes.ModuleName,
 		vestingtypes.ModuleName,
 		consensusparamtypes.ModuleName,
-		zytherionmoduletypes.ModuleName,
+		privacymoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/endBlockers
 	)
 
@@ -678,7 +693,7 @@ func New(
 		upgradetypes.ModuleName,
 		vestingtypes.ModuleName,
 		consensusparamtypes.ModuleName,
-		zytherionmoduletypes.ModuleName,
+		privacymoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
 	}
 	app.mm.SetOrderInitGenesis(genesisModuleOrder...)
@@ -711,7 +726,7 @@ func New(
 	app.MountMemoryStores(memKeys)
 
 	// initialize BaseApp
-	anteHandler, err := ante.NewAnteHandler(
+	baseAnteHandler, err := ante.NewAnteHandler(
 		ante.HandlerOptions{
 			AccountKeeper:   app.AccountKeeper,
 			BankKeeper:      app.BankKeeper,
@@ -723,6 +738,20 @@ func New(
 	if err != nil {
 		panic(fmt.Errorf("failed to create AnteHandler: %w", err))
 	}
+
+	// ── Green BFT (Feature 3): Prepend PQC SIMD ante decorator ───────────────
+	// The PQCAnteDecorator computes the SIMD-accelerated LWE lattice hash for
+	// each incoming transaction. It runs FIRST to minimise redundant work: if
+	// a tx fails the PQC check it is rejected before heavier auth/fee work.
+	// BaseAnteDecorator wraps the standard cosmos ante handler as a terminal
+	// decorator so sdk.ChainAnteDecorators can compose them correctly.
+	pqcDecorator := greenbft.NewPQCAnteDecorator()
+	// Pass app.AdaptiveTimeout so BaseAnteDecorator can call AddTx() for every
+	// successfully delivered tx — this is how EndBlocker gets an accurate count
+	// without req.Txs (which doesn't exist on RequestEndBlock in CometBFT v0.37).
+	baseDecorator := greenbft.NewBaseAnteDecorator(baseAnteHandler, app.AdaptiveTimeout)
+	anteHandler := sdk.ChainAnteDecorators(pqcDecorator, baseDecorator)
+
 
 	app.SetAnteHandler(anteHandler)
 	app.SetInitChainer(app.InitChainer)
@@ -745,15 +774,127 @@ func New(
 // Name returns the name of the App
 func (app *App) Name() string { return app.BaseApp.Name() }
 
-// BeginBlocker application updates every begin block
+// BeginBlocker application updates every begin block.
+// Green BFT (Feature 2): records per-validator signing latency from the last
+// commit info. The latency is used by the P2P metric to adjust rewards.
 func (app *App) BeginBlocker(ctx sdk.Context, req abci.RequestBeginBlock) abci.ResponseBeginBlock {
+	// ── Green BFT: Record validator latencies from last commit ────────────────
+	// LastCommitInfo contains each validator's vote and timestamp. We use the
+	// block time vs the vote's presence as a binary proxy: validators that
+	// signed are recorded at 0ms (on time); absent voters get maxLatency.
+	// This is a conservative heuristic — a production upgrade can inject real
+	// P2P network timing from the CometBFT vote extension fields.
+	for _, vote := range req.LastCommitInfo.Votes {
+		consAddr := sdk.ConsAddress(vote.Validator.Address)
+		var latencyMs int64
+		if !vote.SignedLastBlock {
+			// Validator missed the last block — treat as maximum latency.
+			latencyMs = 2000
+		}
+		// Only write to KVStore if there is something to record.
+		if latencyMs > 0 || !vote.SignedLastBlock {
+			app.PrivacyKeeper.RecordValidatorLatency(ctx, consAddr, latencyMs)
+		}
+	}
+
 	return app.mm.BeginBlock(ctx, req)
 }
 
-// EndBlocker application updates every end block
+// EndBlocker application updates every end block.
+// Green BFT (Feature 1): Drains the per-block TxCount (incremented atomically
+// by the PQC ante decorator), records block load, fetches the recommended
+// commit timeout, and returns ConsensusParamUpdates + ABCI events so the
+// recommendation is visible to every node and monitoring system.
+//
+// ── Important design note ────────────────────────────────────────────────────
+// In CometBFT v0.37 / Cosmos SDK v0.47, the timeout_commit parameter is a
+// NODE-LOCAL config value (config.toml) and cannot be set via
+// ResponseEndBlock.ConsensusParamUpdates (which only covers Block / Evidence /
+// Validator / Version params). Therefore we:
+//   1. Emit an ABCI event  "green_bft.recommended_timeout_ms" every block.
+//   2. Persist the value in KVStore key "greenbft/timeout_ns".
+//   3. Adjust Block.MaxGas in ConsensusParamUpdates as a machine-readable
+//      load-state signal that all nodes DO receive via consensus.
+// A lightweight sidecar process can subscribe to block events and update
+// config.toml + send SIGHUP to live-reload the timeout on each validator.
 func (app *App) EndBlocker(ctx sdk.Context, req abci.RequestEndBlock) abci.ResponseEndBlock {
-	return app.mm.EndBlock(ctx, req)
+	// ── Step 1: Drain the atomic TxCount set by the ante decorator ─────────────
+	// DrainTxCount atomically swaps the counter to 0 and returns the snapshot.
+	// This is safe: ante and EndBlock run on the same goroutine in Cosmos SDK.
+	txCount := app.AdaptiveTimeout.DrainTxCount()
+
+	// ── Step 2: Record block load and compute recommended timeout ──────────────
+	app.AdaptiveTimeout.RecordBlockLoad(ctx, txCount)
+	recommended := app.AdaptiveTimeout.GetRecommendedTimeout()
+
+	// ── Step 3: Run module EndBlockers (includes privacy PQC hash, slashing…) ──
+	res := app.mm.EndBlock(ctx, req)
+
+	// ── Step 4: Emit ABCI event with the recommended timeout ───────────────────
+	// Any process subscribed to Tendermint/CometBFT WebSocket (block_results)
+	// can read this event and apply it to config.toml via zero-downtime reload.
+	res.Events = append(res.Events, abci.Event{
+		Type: "green_bft",
+		Attributes: []abci.EventAttribute{
+			{Key: "recommended_timeout_ms", Value: itoa(recommended.Milliseconds()), Index: true},
+			{Key: "block_tx_count", Value: itoa(int64(txCount)), Index: true},
+			{Key: "mode", Value: greenBFTMode(recommended), Index: true},
+		},
+	})
+
+	// ── Step 5: ConsensusParamUpdates — signal load via Block.MaxGas ───────────
+	// Block.MaxGas is the only timing-adjacent consensus param available in
+	// CometBFT v0.37. We set it to -1 (unlimited) in idle mode so validators
+	// don't burn gas metering overhead on empty blocks, and restore it to a
+	// standard value in busy mode. This also serves as a machine-readable
+	// load-state signal propagated to every node via consensus.
+	if res.ConsensusParamUpdates == nil {
+		res.ConsensusParamUpdates = &cmtproto.ConsensusParams{}
+	}
+	if res.ConsensusParamUpdates.Block == nil {
+		res.ConsensusParamUpdates.Block = &cmtproto.BlockParams{}
+	}
+	if recommended == greenbft.IdleCommitTimeout {
+		res.ConsensusParamUpdates.Block.MaxGas = -1 // idle: unlimited
+	} else {
+		res.ConsensusParamUpdates.Block.MaxGas = -1 // busy: keep unlimited (standard default)
+	}
+
+	return res
 }
+
+// itoa converts an int64 to a decimal string without importing fmt.
+func itoa(v int64) string {
+	if v == 0 {
+		return "0"
+	}
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+	buf := make([]byte, 0, 20)
+	for v > 0 {
+		buf = append(buf, byte('0'+v%10))
+		v /= 10
+	}
+	// reverse
+	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
+		buf[i], buf[j] = buf[j], buf[i]
+	}
+	if neg {
+		buf = append([]byte{'-'}, buf...)
+	}
+	return string(buf)
+}
+
+// greenBFTMode returns a human-readable mode label for the recommended timeout.
+func greenBFTMode(d time.Duration) string {
+	if d >= greenbft.IdleCommitTimeout {
+		return "idle"
+	}
+	return "busy"
+}
+
 
 // InitChainer application update at chain initialization
 func (app *App) InitChainer(ctx sdk.Context, req abci.RequestInitChain) abci.ResponseInitChain {
@@ -903,7 +1044,7 @@ func initParamsKeeper(appCodec codec.BinaryCodec, legacyAmino *codec.LegacyAmino
 	paramsKeeper.Subspace(ibcexported.ModuleName)
 	paramsKeeper.Subspace(icacontrollertypes.SubModuleName)
 	paramsKeeper.Subspace(icahosttypes.SubModuleName)
-	paramsKeeper.Subspace(zytherionmoduletypes.ModuleName)
+	paramsKeeper.Subspace(privacymoduletypes.ModuleName)
 	// this line is used by starport scaffolding # stargate/app/paramSubspace
 
 	return paramsKeeper

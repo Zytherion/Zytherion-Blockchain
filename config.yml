@@ -1,21 +1,57 @@
 version: 1
 accounts:
-- name: alice
-  coins:
-  - 20000token
-  - 200000000stake
-- name: bob
-  coins:
-  - 10000token
-  - 100000000stake
+  # 1. Public Sale / Ecosystem (45% = 450M ZYTC)
+  - name: community_pool
+    coins: ["4500000000000000zytc"]
+
+  # 2. Staking Rewards (25% = 250M ZYTC)
+  - name: rewards_reserve
+    coins: ["2500000000000000zytc"]
+
+  # 3. Development Fund (15% = 150M ZYTC)
+  - name: zytherion_foundation
+    coins: ["1500000000000000zytc"]
+
+  # 4. Team & Founders (10% = 100M ZYTC)
+  - name: team_vesting
+    coins: ["500000000000000zytc"]
+  - name: alice
+    coins: ["500000000000000zytc"]
+
+  # 5. Public Goods Funding (5% = 50M ZYTC)
+  - name: public_goods
+    coins: ["500000000000000zytc"]
+
+  # Akun Testing (Bob)
+  - name: bob
+    coins: ["10000000000000zytc"]
+
+genesis:
+  app_state:
+    staking:
+      params:
+        bond_denom: "zytc"
+    mint:
+      params:
+        mint_denom: "zytc"
+    crisis:
+      constant_fee:
+        denom: "zytc"
+    gov:
+      deposit_params:
+        min_deposit:
+          - denom: "zytc"
+            amount: "100000000" 
+
+validators:
+  - name: alice
+    bonded: "100000000000000zytc" # Alice bonding 10M ZYTC
+
 client:
   openapi:
     path: docs/static/openapi.yml
+
 faucet:
-  name: bob
+  name: community_pool
   coins:
-  - 5token
-  - 100000stake
-validators:
-- name: alice
-  bonded: 100000000stake
+    - 100000000zytc # 10 ZYTC for every request
