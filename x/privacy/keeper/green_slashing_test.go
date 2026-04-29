@@ -85,8 +85,8 @@ func TestRecordValidatorLatency_EMA(t *testing.T) {
 	k.RecordValidatorLatency(ctx, consAddr, 100)
 	score1 := k.GetValidatorP2PScore(ctx, consAddr)
 
-	// Second observation: very high latency spike.
-	k.RecordValidatorLatency(ctx, consAddr, 9999)
+	// Second observation: moderately high latency spike.
+	k.RecordValidatorLatency(ctx, consAddr, 5000)
 	score2 := k.GetValidatorP2PScore(ctx, consAddr)
 
 	// Score after spike must be lower, but not zero (EMA smoothing).

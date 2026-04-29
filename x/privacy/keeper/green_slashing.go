@@ -152,6 +152,7 @@ func (k Keeper) ApplyP2PPenalty(ctx sdk.Context, consAddr sdk.ConsAddress, baseR
 
 // formatFloat converts a float64 to a string with enough precision for sdk.Dec.
 func formatFloat(f float64) string {
-	// sdk.Dec uses 18 decimal places; %.18f is precise enough here.
-	return fmt.Sprintf("%.18f", f)
+	// We use %.6f to avoid float64 precision errors that can cause
+	// values like 0.85 to be represented as 0.849999999999999978.
+	return fmt.Sprintf("%.6f", f)
 }

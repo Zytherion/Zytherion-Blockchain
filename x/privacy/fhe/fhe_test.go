@@ -1,3 +1,6 @@
+//go:build !notfhe
+// +build !notfhe
+
 package fhe_test
 
 import (
@@ -8,21 +11,15 @@ import (
 	"zytherion/x/privacy/fhe"
 )
 
-// TestNewContext verifies that a Context can be created without errors.
 func TestNewContext(t *testing.T) {
 	ctx, err := fhe.NewContext()
 	require.NoError(t, err)
 	require.NotNil(t, ctx)
-	require.NotNil(t, ctx.SecretKey())
-	require.NotNil(t, ctx.PublicKey())
+	ct, err := ctx.Encrypt(0)
+	require.NoError(t, err)
+	require.NotEmpty(t, ct)
 }
 
-// TestEncryptDecrypt verifies the round-trip: encrypt a value, decrypt it,
-// and assert the original value is recovered exactly.
-//
-// Note: BFV arithmetic is modular with respect to the plaintext modulus t.
-// For PN12QP109, t = 65537, so values must be in [0, t). Values >= t are
-// automatically reduced modulo t — see TestModularWrapping below.
 func TestEncryptDecrypt(t *testing.T) {
 	ctx, err := fhe.NewContext()
 	require.NoError(t, err)
@@ -33,56 +30,45 @@ func TestEncryptDecrypt(t *testing.T) {
 	}{
 		{"zero", 0},
 		{"one", 1},
-		// Use a value safely within PN12QP109's plaintext modulus t=65537.
-		{"large_within_t", 65000},
-		// The following would have failed with the old PN12QP109 params (t=65537)
-		// but succeeds with our custom 40-bit prime t≈1.1 trillion.
+		{"large", 65000},
 		{"one_billion", 1_000_000_000},
+		// NOTE: FheUint32 supports values up to 4,294,967,295 (2^32 - 1).
+		{"max_u32", 4_294_967_295},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ct, err := ctx.Encrypt(tt.value)
-			require.NoError(t, err, "Encrypt should not fail")
-			require.NotNil(t, ct)
-
+			require.NoError(t, err)
+			require.NotEmpty(t, ct)
 			got, err := ctx.Decrypt(ct)
-			require.NoError(t, err, "Decrypt should not fail")
-			require.Equal(t, tt.value, got, "decrypted value must match plaintext")
+			require.NoError(t, err)
+			require.Equal(t, tt.value, got)
 		})
 	}
 }
 
-// TestModularWrapping documents BFV's modular arithmetic: values >= t (plaintext
-// modulus) wrap around. With our custom params, t = 0x10000048001 = 1,099,511,955,457.
-// Values in [0, t) are exact; Encrypt(t) decrypts to 0.
-func TestModularWrapping(t *testing.T) {
+func TestCompressDecompress(t *testing.T) {
 	ctx, err := fhe.NewContext()
 	require.NoError(t, err)
 
-	// Retrieve t from the context itself so this test stays in sync with
-	// any future parameter changes.
-	plaintextModulus := ctx.PlaintextModulus()
-	require.EqualValues(t, uint64(0x10000048001), plaintextModulus,
-		"plaintext modulus should be the 40-bit prime 0x10000048001")
+	original := uint64(999_888_777)
+	compressed, err := ctx.Encrypt(original)
+	require.NoError(t, err)
 
-	ct, err := ctx.Encrypt(plaintextModulus)
+	decrypted, err := ctx.Decrypt(compressed)
 	require.NoError(t, err)
-	got, err := ctx.Decrypt(ct)
-	require.NoError(t, err)
-	// Encrypt(t) ≡ 0 (mod t)
-	require.Equal(t, uint64(0), got, "Enc(t) should decrypt to 0 (mod t)")
+	require.Equal(t, original, decrypted)
+
+	require.Less(t, len(compressed), 12_000,
+		"compressed ciphertext must be < 12KB (was %d bytes)", len(compressed))
 }
 
-// TestHomomorphicAdd verifies that adding two ciphertexts homomorphically
-// produces a ciphertext whose decryption equals the sum of the plaintexts.
 func TestHomomorphicAdd(t *testing.T) {
 	ctx, err := fhe.NewContext()
 	require.NoError(t, err)
 
-	tests := []struct {
-		a, b, want uint64
-	}{
+	tests := []struct{ a, b, want uint64 }{
 		{0, 0, 0},
 		{1, 2, 3},
 		{100, 200, 300},
@@ -92,34 +78,45 @@ func TestHomomorphicAdd(t *testing.T) {
 	for _, tt := range tests {
 		ctA, err := ctx.Encrypt(tt.a)
 		require.NoError(t, err)
-
 		ctB, err := ctx.Encrypt(tt.b)
 		require.NoError(t, err)
-
 		ctSum, err := ctx.AddCiphertexts(ctA, ctB)
-		require.NoError(t, err, "AddCiphertexts should not fail")
-
+		require.NoError(t, err)
 		got, err := ctx.Decrypt(ctSum)
 		require.NoError(t, err)
-		require.Equal(t, tt.want, got,
-			"Decrypt(Enc(%d) + Enc(%d)) should equal %d", tt.a, tt.b, tt.want)
+		require.Equal(t, tt.want, got)
 	}
 }
 
-// TestNilCiphertextErrors verifies graceful error handling for nil inputs.
+func TestHomomorphicSub(t *testing.T) {
+	ctx, err := fhe.NewContext()
+	require.NoError(t, err)
+
+	a := uint64(1_000_000)
+	b := uint64(250_000)
+	ctA, _ := ctx.Encrypt(a)
+	ctB, _ := ctx.Encrypt(b)
+	ctResult, err := ctx.SubCiphertexts(ctA, ctB)
+	require.NoError(t, err)
+	result, err := ctx.Decrypt(ctResult)
+	require.NoError(t, err)
+	require.Equal(t, a-b, result)
+}
+
 func TestNilCiphertextErrors(t *testing.T) {
 	ctx, err := fhe.NewContext()
 	require.NoError(t, err)
 
-	ct, err := ctx.Encrypt(42)
-	require.NoError(t, err)
+	ct, _ := ctx.Encrypt(42)
 
 	_, err = ctx.AddCiphertexts(nil, ct)
-	require.Error(t, err, "nil first argument should return error")
-
+	require.Error(t, err)
 	_, err = ctx.AddCiphertexts(ct, nil)
-	require.Error(t, err, "nil second argument should return error")
-
+	require.Error(t, err)
 	_, err = ctx.Decrypt(nil)
-	require.Error(t, err, "nil ciphertext decrypt should return error")
+	require.Error(t, err)
+	_, err = ctx.SubCiphertexts(nil, ct)
+	require.Error(t, err)
+	_, err = ctx.SubCiphertexts(ct, nil)
+	require.Error(t, err)
 }

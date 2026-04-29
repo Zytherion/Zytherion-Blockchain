@@ -113,6 +113,7 @@ import (
 	"github.com/spf13/cast"
 
 	privacymodule "zytherion/x/privacy"
+	privacymodulefhe "zytherion/x/privacy/fhe"
 	privacymodulekeeper "zytherion/x/privacy/keeper"
 	privacymoduletypes "zytherion/x/privacy/types"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
@@ -526,14 +527,31 @@ func New(
 		),
 	)
 
+	// ── Privacy Module: FHE context ──────────────────────────────────────────
+	// fheCtx is created ONCE at node startup.  Key generation is expensive
+	// and every ciphertext stored on-chain must be compatible with the same
+	// key pair.  In a production deployment the key pair should be persisted
+	// to disk (or a KMS) and reloaded on restart; for now we generate fresh
+	// keys each boot (suitable for devnet / single-node testing).
+	fheCtx, err := privacymodulefhe.NewContext()
+	if err != nil {
+		panic(fmt.Errorf("failed to initialise FHE context: %w", err))
+	}
+
 	app.PrivacyKeeper = *privacymodulekeeper.NewKeeper(
 		appCodec,
 		keys[privacymoduletypes.StoreKey],
 		keys[privacymoduletypes.MemStoreKey],
 		app.GetSubspace(privacymoduletypes.ModuleName),
 		app.BankKeeper,
+		fheCtx,
 	)
 	privacyModule := privacymodule.NewAppModule(appCodec, app.PrivacyKeeper, app.AccountKeeper, app.BankKeeper)
+
+	// ── Crypto subsystem startup self-test ────────────────────────────────────
+	// Prints a clear status banner to the node logger so operators immediately
+	// know whether FHE (BFV/Lattigo) and LWE (Ring-LWE hash) are operational.
+	RunCryptoStartupChecks(logger, fheCtx)
 
 	// ── Green BFT: Adaptive timeout manager ──────────────────────────────────
 	// Shares the privacy module's KVStore for persisting the suggested timeout.
@@ -758,6 +776,14 @@ func New(
 	app.SetBeginBlocker(app.BeginBlocker)
 	app.SetEndBlocker(app.EndBlocker)
 
+	// ── ABCI 2.0: LWE block proposal handlers ────────────────────────────────
+	// PrepareProposal injects a 104-byte LWE sentinel (magic+version+hash) as
+	// tx[0] before broadcasting the block proposal to peers.
+	// ProcessProposal re-computes the LWE hash from the remaining transactions
+	// and rejects proposals where the hash doesn't match.
+	app.SetPrepareProposal(app.LWEPrepareProposal)
+	app.SetProcessProposal(app.LWEProcessProposal)
+
 	if loadLatest {
 		if err := app.LoadLatestVersion(); err != nil {
 			tmos.Exit(err.Error())
@@ -828,6 +854,9 @@ func (app *App) EndBlocker(ctx sdk.Context, req abci.RequestEndBlock) abci.Respo
 	recommended := app.AdaptiveTimeout.GetRecommendedTimeout()
 
 	// ── Step 3: Run module EndBlockers (includes privacy PQC hash, slashing…) ──
+	// Note: The LWE proposal hash is committed to KVStore by LWEProcessProposal
+	// at proposal acceptance time, before block execution begins. By this point
+	// the sentinel hash is already stored under lweMarkerKey.
 	res := app.mm.EndBlock(ctx, req)
 
 	// ── Step 4: Emit ABCI event with the recommended timeout ───────────────────
@@ -1006,6 +1035,14 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 
 	// register app's OpenAPI routes.
 	docs.RegisterOpenAPIService(Name, apiSvr.Router)
+
+	// ── Privacy: custom decrypt-balance REST endpoint (PoC / demo) ────────────
+	// GET /zytherion/privacy/v1/decrypt-balance/{address}
+	// Uses the node's in-memory TFHE client key to decrypt on-chain balances.
+	app.PrivacyKeeper.RegisterDecryptBalanceRoute(
+		apiSvr.Router,
+		func() sdk.Context { return app.BaseApp.NewContext(true, cmtproto.Header{}) },
+	)
 }
 
 // RegisterTxService implements the Application.RegisterTxService method.

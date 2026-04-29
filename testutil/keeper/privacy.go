@@ -13,6 +13,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	typesparams "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/stretchr/testify/require"
+	"zytherion/x/privacy/fhe"
 	"zytherion/x/privacy/keeper"
 	"zytherion/x/privacy/types"
 )
@@ -36,12 +37,17 @@ func PrivacyKeeper(t testing.TB) (*keeper.Keeper, sdk.Context) {
 		memStoreKey,
 		"PrivacyParams",
 	)
+
+	fheCtx, err := fhe.NewContext()
+	require.NoError(t, err, "fhe.NewContext must not fail in test setup")
+
 	k := keeper.NewKeeper(
 		cdc,
 		storeKey,
 		memStoreKey,
 		paramsSubspace,
 		nil,
+		fheCtx,
 	)
 
 	ctx := sdk.NewContext(stateStore, tmproto.Header{}, false, log.NewNopLogger())

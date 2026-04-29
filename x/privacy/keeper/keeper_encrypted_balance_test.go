@@ -1,3 +1,6 @@
+//go:build !notfhe
+// +build !notfhe
+
 package keeper_test
 
 import (
@@ -14,15 +17,12 @@ import (
 	paramskeeper "github.com/cosmos/cosmos-sdk/x/params/keeper"
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
 
 	"zytherion/x/privacy/fhe"
 	keeperpkg "zytherion/x/privacy/keeper"
 	"zytherion/x/privacy/types"
 )
 
-// newTestKeeper builds a minimal in-memory keeper suitable for unit tests
-// without depending on any testutil packages that reference missing modules.
 func newTestKeeper(t *testing.T) (keeperpkg.Keeper, sdk.Context) {
 	t.Helper()
 
@@ -48,7 +48,10 @@ func newTestKeeper(t *testing.T) (keeperpkg.Keeper, sdk.Context) {
 	pk := paramskeeper.NewKeeper(cdc, amino, paramsKey, paramsTKey)
 	subspace := pk.Subspace(types.ModuleName)
 
-	k := *keeperpkg.NewKeeper(cdc, storeKey, memKey, subspace, nil)
+	fheCtx, err := fhe.NewContext()
+	require.NoError(t, err, "fhe.NewContext must not fail in test setup")
+
+	k := *keeperpkg.NewKeeper(cdc, storeKey, memKey, subspace, nil, fheCtx)
 	return k, ctx
 }
 
@@ -58,17 +61,13 @@ func TestSetGetEncryptedBalance(t *testing.T) {
 	k, ctx := newTestKeeper(t)
 	addr := sdk.AccAddress([]byte("recipient_addr_001__"))
 
-	fheCtx, err := fhe.NewContext()
+	fheCtx := k.FHEContext()
+
+	// Encrypt returns compressed bytes directly.
+	ctBytes, err := fheCtx.Encrypt(500_000)
 	require.NoError(t, err)
 
-	ct, err := fheCtx.Encrypt(500_000)
-	require.NoError(t, err)
-	ctBytes, err := ct.MarshalBinary()
-	require.NoError(t, err)
-
-	// Nothing stored yet.
 	require.False(t, k.HasEncryptedBalance(ctx, addr))
-
 	k.SetEncryptedBalance(ctx, addr, ctBytes)
 	require.True(t, k.HasEncryptedBalance(ctx, addr))
 
@@ -77,54 +76,29 @@ func TestSetGetEncryptedBalance(t *testing.T) {
 	require.Equal(t, ctBytes, got, "retrieved bytes must match stored bytes exactly")
 }
 
-// TestHomomorphicBalanceUpdate is the golden-path integration test.
-// It simulates two encrypted deposits and verifies Enc(300) + Enc(700) → 1000.
+// TestHomomorphicBalanceUpdate simulates two encrypted deposits and verifies
+// HomomorphicAdd correctly accumulates: Enc(300) + Enc(700) â†’ 1000.
 func TestHomomorphicBalanceUpdate(t *testing.T) {
 	k, ctx := newTestKeeper(t)
 
-	fheCtx, err := fhe.NewContext()
-	require.NoError(t, err)
+	fheCtx := k.FHEContext()
 
 	recipientAddr := sdk.AccAddress([]byte("recipient_addr_002__"))
-	bfvParams := fheCtx.Params()
 
-	// ── First deposit: Enc(300) ───────────────────────────────────────────────
+	// First deposit: Enc(300)
 	ct300, err := fheCtx.Encrypt(300)
 	require.NoError(t, err)
-	ct300Bytes, err := ct300.MarshalBinary()
-	require.NoError(t, err)
-	k.SetEncryptedBalance(ctx, recipientAddr, ct300Bytes)
+	k.SetEncryptedBalance(ctx, recipientAddr, ct300)
 
-	// ── Second deposit: Enc(700) — homomorphic add ────────────────────────────
+	// Second deposit via HomomorphicAdd: adds Enc(700)
 	ct700, err := fheCtx.Encrypt(700)
 	require.NoError(t, err)
+	require.NoError(t, k.HomomorphicAdd(ctx, recipientAddr, ct700))
 
-	existingBytes, found := k.GetEncryptedBalance(ctx, recipientAddr)
-	require.True(t, found)
-
-	// Deserialise stored ciphertext.
-	currentCt := rlwe.NewCiphertext(bfvParams.Parameters, 1, bfvParams.MaxLevel())
-	require.NoError(t, currentCt.UnmarshalBinary(existingBytes))
-
-	// Homomorphic addition — no decryption.
-	newBalanceCt, err := fheCtx.AddCiphertexts(currentCt, ct700)
+	// Verify by decrypting (off-chain only)
+	result, err := k.DecryptBalance(ctx, recipientAddr)
 	require.NoError(t, err)
-
-	newBalanceBytes, err := newBalanceCt.MarshalBinary()
-	require.NoError(t, err)
-	k.SetEncryptedBalance(ctx, recipientAddr, newBalanceBytes)
-
-	// ── Verify by decrypting (off-chain only) ─────────────────────────────────
-	finalBytes, found := k.GetEncryptedBalance(ctx, recipientAddr)
-	require.True(t, found)
-
-	finalCt := rlwe.NewCiphertext(bfvParams.Parameters, 1, bfvParams.MaxLevel())
-	require.NoError(t, finalCt.UnmarshalBinary(finalBytes))
-
-	result, err := fheCtx.Decrypt(finalCt)
-	require.NoError(t, err)
-	require.EqualValues(t, uint64(1000), result,
-		"Enc(300) ⊕ Enc(700) must decrypt to 1000")
+	require.EqualValues(t, uint64(1000), result, "Enc(300) + Enc(700) must decrypt to 1000")
 }
 
 // TestGetEncryptedBalance_NotFound verifies that an unknown address returns
@@ -137,22 +111,19 @@ func TestGetEncryptedBalance_NotFound(t *testing.T) {
 }
 
 // TestEncryptedBalanceKeyIsolation confirms that setting balance for addr A
-// does not affect addr B (keys are properly namespaced).
+// does not affect addr B.
 func TestEncryptedBalanceKeyIsolation(t *testing.T) {
 	k, ctx := newTestKeeper(t)
 
-	fheCtx, err := fhe.NewContext()
-	require.NoError(t, err)
+	fheCtx := k.FHEContext()
 
 	addrA := sdk.AccAddress([]byte("isolation_addr_A____"))
 	addrB := sdk.AccAddress([]byte("isolation_addr_B____"))
 
 	ctA, err := fheCtx.Encrypt(100)
 	require.NoError(t, err)
-	ctABytes, _ := ctA.MarshalBinary()
-	k.SetEncryptedBalance(ctx, addrA, ctABytes)
+	k.SetEncryptedBalance(ctx, addrA, ctA)
 
-	// B should still be absent.
 	require.False(t, k.HasEncryptedBalance(ctx, addrB))
 	bz, found := k.GetEncryptedBalance(ctx, addrB)
 	require.False(t, found)

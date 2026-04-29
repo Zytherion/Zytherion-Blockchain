@@ -3,5 +3,36 @@ package zytherion.privacy;
 
 option go_package = "zytherion/x/privacy/types";
 
-// Msg defines the Msg service.
-service Msg {}
+// Msg defines the Msg service for the privacy module.
+service Msg {
+  // EncryptedTransfer performs a homomorphic transfer of an encrypted amount
+  // from sender to recipient without revealing the plaintext value.
+  rpc EncryptedTransfer(MsgEncryptedTransfer) returns (MsgEncryptedTransferResponse);
+
+  // Deposit converts plaintext bank tokens (sdk.Coin) into an encrypted
+  // balance stored in the privacy module.  The coins are escrowed into the
+  // module account; the encrypted balance is updated homomorphically.
+  rpc Deposit(MsgDeposit) returns (MsgDepositResponse);
+}
+
+// MsgEncryptedTransfer submits a BFV-encrypted amount transfer.
+message MsgEncryptedTransfer {
+  string sender    = 1;
+  string recipient = 2;
+  // Binary-encoded BFV ciphertext (rlwe.Ciphertext.MarshalBinary output).
+  bytes  amount_ciphertext = 3;
+}
+
+// MsgEncryptedTransferResponse is empty — the updated ciphertext is on-chain.
+message MsgEncryptedTransferResponse {}
+
+// MsgDeposit converts plaintext bank tokens into a privacy-module encrypted balance.
+message MsgDeposit {
+  // creator is the bech32 address of the depositor.
+  string creator = 1;
+  // amount is the plaintext coin to deposit, e.g. "1000uzytc".
+  string amount  = 2;
+}
+
+// MsgDepositResponse is empty — the updated encrypted balance is on-chain.
+message MsgDepositResponse {}

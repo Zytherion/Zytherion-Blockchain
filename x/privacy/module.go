@@ -144,14 +144,18 @@ func (AppModule) ConsensusVersion() uint64 { return 1 }
 func (am AppModule) BeginBlock(_ sdk.Context, _ abci.RequestBeginBlock) {}
 
 // EndBlock is triggered at the end of every block.
-// It computes the PQC block hash for this block and stores it in the
-// privacy module KVStore.  Because the write happens before Commit(), the
+// It computes the LWE-SHA3 Hybrid block hash for this block and stores it in
+// the privacy module KVStore.  Because the write happens before Commit(), the
 // stored hash is included in the multistore root — and therefore in the
 // canonical Cosmos AppHash of the NEXT block.
 //
+// Hash algorithm: LWE-SHA3-Hybrid (Ring-LWE, n=256, q=3329)
+// Output: 96-byte fixed-size hash (32-byte seed || 64-byte LWE b-vector)
+// Fallback: SHA3-256 (32-byte) if LWE encounters an unexpected error.
+//
 // Hash input (canonical):
 //
-//	H_n = SHA3-256(domain || height_n || H_{n-1} || AppHash_{n-1} || txData_n)
+//	H_n = LWEHash(CanonicalBlockData_n, H_{n-1})
 //
 // This fulfils the PQC-secured blockchain structure: each block carries a
 // quantum-resistant commitment that chains back to genesis via PrevHash.
@@ -163,31 +167,37 @@ func (am AppModule) EndBlock(ctx sdk.Context, req abci.RequestEndBlock) []abci.V
 	prevPQCHash := store.Get([]byte(types.LatestPQCHashKey))
 
 	// ── 2. Collect raw transaction bytes from the block context ──────────────
-	// sdk.Context.BlockHeader().DataHash is the Merkle root of tx bytes; we
-	// use it as the canonical "transaction data" input so we don't need to
-	// re-decode individual txs (which is expensive and requires the codec).
 	blockHeader := ctx.BlockHeader()
 	txData := blockHeader.DataHash // 32-byte Merkle root of the block's txs
-	appHashPrev := blockHeader.AppHash // canonical AppHash from previous block
+	appHashPrev := blockHeader.AppHash
 
-	// Assemble the input using the new BlockHashInput API.
+	// Assemble the BlockHashInput for canonical serialisation.
 	input := pqc.BlockHashInput{
 		Height:       ctx.BlockHeight(),
 		PrevHash:     prevPQCHash,
-		Transactions: [][]byte{txData}, // DataHash represents all block txs
+		Transactions: [][]byte{txData},
 		AppHash:      appHashPrev,
 	}
 
-	// ── 3. Compute the PQC hash for this block ───────────────────────────────
-	hashBytes := pqc.GenerateBlockHash(input)
+	// ── 3. Compute LWE-SHA3 Hybrid hash for this block ───────────────────────
+	// GenerateLWEBlockHashWithFallback attempts the Ring-LWE construction first
+	// and transparently falls back to SHA3-256 on any error.
+	hashBytes := pqc.GenerateLWEBlockHashWithFallback(input)
+
+	// Determine which algorithm produced the hash (for logging).
+	hashAlgo := pqc.HashAlgorithm // "LWE-SHA3-Hybrid"
+	if len(hashBytes) == pqc.HashSize {
+		hashAlgo = "SHA3-256-Fallback"
+	}
 
 	// ── 4. Persist (latest only) ──────────────────────────────────────────────
-	// "pqc_hash/latest" → fast O(1) lookup for the next block's EndBlock.
 	store.Set([]byte(types.LatestPQCHashKey), hashBytes)
 
 	ctx.Logger().Info("PQC block hash computed",
 		"height", ctx.BlockHeight(),
-		"pqc_hash_hex", fmt.Sprintf("%x", hashBytes),
+		"algorithm", hashAlgo,
+		"hash_size_bytes", len(hashBytes),
+		"pqc_hash_hex", fmt.Sprintf("%x", hashBytes[:16])+"…",
 	)
 
 	return []abci.ValidatorUpdate{}
