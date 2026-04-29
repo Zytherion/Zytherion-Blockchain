@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://zytherion.pages.dev/favicon.png" alt="Zytherion Logo" width="120" />
+<img src="https://zytherion.pages.dev/logo_zythc.png" alt="Zytherion Logo" width="120" />
 
 # Zytherion Blockchain
 
