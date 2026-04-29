@@ -135,7 +135,7 @@ graph LR
 |  +--------------+  +--------------+  +------------------+  |
 |  |  PQC Layer   |  |   HE Layer   |  |  Green BFT Layer |  |
 |  |              |  |              |  |                  |  |
-|  | Dilithium3   |  | FHE Compute  |  | Adaptive Blocks  |  |
+|  | Dilithium3   |  | TFHE Compute  |  | Adaptive Blocks  |  |
 |  | SHA3-256     |  | x/privacy    |  | Green Badge      |  |
 |  | SIMD Verify  |  | HE Attest    |  | Carbon Savings   |  |
 |  +--------------+  +--------------+  +------------------+  |
@@ -179,7 +179,12 @@ The native token of the Zytherion network is **ZYTC** (Zytherion Coin), with a *
 
 - Go `>= 1.21`
 - [Ignite CLI](https://docs.ignite.com/welcome/install) `v0.27.0`
+- [Rust Toolchain](https://rustup.rs) (required to build the TFHE-rs CGo library)
 - Git
+
+> **First-time setup:** After cloning, run `make build-tfhe` once to compile the
+> TFHE-rs static library before starting the chain. This takes ~30â€“90 minutes
+> on first build (subsequent builds use Cargo's incremental cache).
 
 ### Build and Run a Local Node
 
