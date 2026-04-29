@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/Zytherion-Blockchain-6C63FF?style=for-the-badge&logoColor=white" alt="Zytherion Blockchain"/>
+<img src="https://zytherion.pages.dev/logo_zythc.png" alt="Zytherion Blockchain"/>
 
-# ⛓️ Zytherion Blockchain
+# Zytherion Blockchain
 
 **A Post-Quantum Privacy Blockchain built on Cosmos SDK**
 
