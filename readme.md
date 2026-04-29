@@ -1,310 +1,344 @@
 <div align="center">
 
-<img src="https://zytherion.pages.dev/logo_zythc.png" alt="Zytherion Logo" width="120" />
+<img src="https://zytherion.pages.dev/favicon.png" alt="Zytherion Logo" width="120" />
 
-# ZYTHERION
+# Zytherion Blockchain
 
-### *The Quantum-Resistant, Privacy-Preserving, Eco-Friendly Blockchain*
+**A next-generation, privacy-first blockchain built on Cosmos SDK — secured by Fully Homomorphic Encryption, Torus FHE, and LWE-based post-quantum cryptography.**
 
-[![Built on Cosmos SDK](https://img.shields.io/badge/Cosmos%20SDK-v0.47-7C3AED?style=for-the-badge&logo=cosmos&logoColor=white)](https://github.com/cosmos/cosmos-sdk)
-[![PQC: Dilithium3](https://img.shields.io/badge/PQC-Dilithium3-06B6D4?style=for-the-badge&logoColor=white)](https://pq-crystals.org/dilithium/)
-[![HE: FHE Ready](https://img.shields.io/badge/HE-FHE%20Ready-10B981?style=for-the-badge&logoColor=white)](#homomorphic-encryption)
-[![Consensus: Green BFT](https://img.shields.io/badge/Consensus-Green%20BFT-22C55E?style=for-the-badge&logoColor=white)](#green-bft)
-[![Token: ZYTC](https://img.shields.io/badge/Token-ZYTC-F59E0B?style=for-the-badge&logoColor=white)](https://zytherion.pages.dev)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-6366F1?style=for-the-badge)](LICENSE)
-
-<br/>
-
-> **Zytherion** is a next-generation Layer 1 blockchain engineered from the ground up for the post-quantum era.
-> It combines **Post-Quantum Cryptography (PQC)**, **Homomorphic Encryption (HE)**, and an energy-efficient
-> **Green Byzantine Fault Tolerant (Green BFT)** consensus — creating a chain that is simultaneously
-> *quantum-safe*, *privacy-preserving*, and *sustainable*.
-
-<br/>
-
-**[Website](https://zytherion.pages.dev) · [Docs](#documentation) · [Quick Start](#quick-start) · [Community](#community)**
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Built with Cosmos SDK](https://img.shields.io/badge/Cosmos%20SDK-v0.47-purple)](https://docs.cosmos.network/)
+[![TFHE-rs](https://img.shields.io/badge/TFHE--rs-v0.7-orange)](https://github.com/zama-ai/tfhe-rs)
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![Rust](https://img.shields.io/badge/Rust-Stable-orange?logo=rust)](https://www.rust-lang.org/)
+[![Website](https://img.shields.io/badge/Website-zytherion.pages.dev-green)](https://zytherion.pages.dev/)
 
 </div>
 
 ---
 
-## About
+## Overview
 
-Zytherion is **founded by Rayhan Aziel Abbrar (Zhao Han)**, who designed the chain's core architecture with a focus on long-term cryptographic resilience, on-chain privacy, and environmental sustainability.
+Zytherion is a custom Cosmos SDK-based blockchain that enforces **cryptographic privacy at the protocol level**. Unlike conventional blockchains where all state is publicly observable, Zytherion stores and processes balances as **encrypted ciphertexts** — validators can verify correctness of transactions *without ever learning the plaintext amounts*.
 
-The project was built from a conviction that existing blockchains are structurally vulnerable — both to the coming era of quantum computing and to the growing demand for computation that does not expose sensitive user data. Zytherion is the answer to both.
+**Core innovations:**
 
----
-
-## Why Zytherion?
-
-The three greatest existential threats to modern blockchains are:
-
-| Threat | Impact | Zytherion's Answer |
-|--------|--------|-------------------|
-| **Quantum Computers** | Break ECDSA and RSA signatures | **PQC with Dilithium3 + SHA3-256** |
-| **On-chain Privacy Leaks** | Sensitive computation is exposed in plaintext | **Homomorphic Encryption (FHE)** |
-| **Energy Waste** | PoW and idle validators burn power unnecessarily | **Green BFT adaptive consensus** |
-
-Zytherion tackles all three simultaneously — without sacrificing decentralization or speed.
+| Pillar | Technology | Purpose |
+|--------|-----------|---------|
+| Fully Homomorphic Encryption | [TFHE-rs v0.7](https://github.com/zama-ai/tfhe-rs) via CGo FFI | Encrypted balance arithmetic on-chain |
+| Torus FHE / LWE Cryptography | TFHE FheUint64 scheme | Post-quantum-resistant ciphertext operations |
+| Homomorphic Transfers | Add/Sub in ciphertext space | Transfer value without revealing amount |
+| LWE Block Hashing | ABCI 2.0 PrepareProposal | LWE-SHA3 hybrid sentinel per block |
+| TFHE Compression | In-library compression via TFHE-rs | 30-50 KB to 1-5 KB ciphertext storage |
+| Green BFT Consensus | CometBFT | Energy-efficient Byzantine fault-tolerant consensus |
 
 ---
 
-## Core Technology Pillars
+## Key Features
 
-### Post-Quantum Cryptography (PQC)
-
-Zytherion replaces classical ECDSA-based cryptography with **NIST-standardized, lattice-based** algorithms
-that are provably secure against quantum adversaries — even against Shor's algorithm running on a
-large-scale quantum computer.
+### Encrypted Balance Privacy
+Every account's balance is stored on-chain as a **compressed TFHE ciphertext**. No validator, block explorer, or observer can determine a wallet's balance from chain state alone.
 
 ```
-Block Hashing   ->  SHA3-256    (Keccak, collision-resistant, quantum-hardened)
-TX Signing      ->  Dilithium3  (CRYSTALS-Dilithium, NIST PQC Round 3 winner)
-Coin Type       ->  2823        (Custom derivation path, BIP-44 compatible)
+On-chain state:  [ Enc(balance_A) ]  [ Enc(balance_B) ]
+Observers see:   [ 1-5 KB blob   ]  [ 1-5 KB blob   ]
+                      |                   |
+               Only the key holder can decrypt
 ```
 
-- **Dilithium3 Signatures** — 1312-byte public keys, 2420-byte signatures; immune to Grover's and Shor's attacks
-- **SHA3-256 Block Hashing** — each block header is hashed using Keccak-f[1600], providing 128-bit quantum security
-- **SIMD-Optimized Verification** — PQC signature verification is accelerated via CPU vector instructions,
-  dramatically reducing the energy cost per block
+### Homomorphic Transfers
+The `EncryptedTransfer` message allows value transfer without revealing amounts:
 
-> **Result:** Zytherion validators and wallets are fully secure against data harvested today under "harvest now, decrypt later" attacks.
+```
+newSenderBal    = Enc(senderBal)    - Enc(amount)   (all in ciphertext space)
+newReceiverBal  = Enc(receiverBal)  + Enc(amount)
+```
+
+Validators only learn: *"a transfer happened from address A to address B."*
+
+### TFHE Ciphertext Compression
+Raw TFHE ciphertexts are large (~30-50 KB per value). Zytherion applies **in-library compression** at the point of encryption, reducing on-chain storage to **~1-5 KB per ciphertext** — making FHE-based storage economically viable.
+
+```
+Encrypt(value) -> raw ciphertext (~30-50 KB)
+                         |
+                    compress()
+                         |
+           compressed ciphertext (~1-5 KB)  <- stored in KVStore
+```
+
+### LWE Block Hashing (ABCI 2.0)
+Every block is anchored with an **LWE-SHA3 hybrid sentinel** injected as the first transaction via `PrepareProposal`. The sentinel is independently verified in `ProcessProposal` and the audit hash is persisted in the `PrivacyKeeper` store, anchoring it in the `AppHash`.
 
 ---
 
-### Homomorphic Encryption (HE)
-
-Homomorphic Encryption allows computation *directly on encrypted data* — meaning a validator
-can process a transaction and compute a result **without ever seeing the plaintext**.
-
-```
-Input (plaintext)  ->  Encrypt  ->  [Ciphertext]  ->  Compute  ->  [Encrypted Result]
-                                                                            |
-                                                                   Decrypt -> Output
-```
-
-**How Zytherion uses HE:**
-
-- **FHE Computation Layer** — Idle validator nodes run Fully Homomorphic Encryption (FHE) computations
-  on encrypted payloads, contributing to network privacy without leaking sensitive state
-- **Privacy-Preserving Modules** — The `x/privacy` module leverages HE to allow confidential state transitions:
-  balances, votes, and analytics can be computed without exposing user data
-- **Mock FHE Attestation** — Validators attest that HE computations were performed correctly,
-  earning *Green Badges* for verified private compute contributions
-
-> **Result:** Zytherion is one of the few L1 chains where on-chain computation can be privacy-preserving by design.
-
----
-
-### Green BFT Consensus
-
-Standard BFT consensus wastes energy when the network is idle. Zytherion's **Green BFT** is
-an adaptive consensus mechanism that dynamically adjusts resource usage based on real-time network load.
-
-**Key Green BFT Features**
-
-| Feature | Description |
-|---------|-------------|
-| **Adaptive Block Times** | Block interval scales with TX load — slow when idle, fast when busy |
-| **Performance-to-Power Slashing** | High-latency or power-hungry validators face proportional slashing |
-| **Green Badge System** | Validators that demonstrate low power profiles earn on-chain reputation badges |
-| **Carbon Savings Query** | `zytheriond q greenbft carbon-savings` reports real-time energy efficiency metrics |
-| **SIMD PQC Acceleration** | Vector-optimized Dilithium3 verification cuts per-block energy usage significantly |
-
-```mermaid
-graph LR
-    A[Low TX Load] -->|Adaptive| B[Extend Block Time]
-    B --> C[Reduce Validator CPU]
-    C --> D[Lower Energy Use]
-    D --> E[Green Badge Awarded]
-    E --> F[Higher Validator Score]
-```
-
-> **Result:** Zytherion validators consume significantly less energy during off-peak hours, making the network
-> more sustainable without sacrificing security or decentralization.
-
----
-
-## Architecture Overview
-
-```
-+-------------------------------------------------------------+
-|                        ZYTHERION NODE                       |
-|                                                             |
-|  +--------------+  +--------------+  +------------------+  |
-|  |  PQC Layer   |  |   HE Layer   |  |  Green BFT Layer |  |
-|  |              |  |              |  |                  |  |
-|  | Dilithium3   |  | TFHE Compute  |  | Adaptive Blocks  |  |
-|  | SHA3-256     |  | x/privacy    |  | Green Badge      |  |
-|  | SIMD Verify  |  | HE Attest    |  | Carbon Savings   |  |
-|  +--------------+  +--------------+  +------------------+  |
-|                                                             |
-|  +-----------------------------------------------------+   |
-|  |              Cosmos SDK v0.47 Base                  |   |
-|  |   Bank · Staking · Gov · IBC · Slashing · Mint     |   |
-|  +-----------------------------------------------------+   |
-|                                                             |
-|  +-----------------------------------------------------+   |
-|  |               CometBFT Consensus Engine             |   |
-|  +-----------------------------------------------------+   |
-+-------------------------------------------------------------+
-```
-
----
-
-## ZYTC Tokenomics
-
-The native token of the Zytherion network is **ZYTC** (Zytherion Coin), with a **1 billion ZYTC** total supply.
-
-| Allocation | Amount | Percentage | Purpose |
-|------------|--------|------------|---------|
-| Community / Ecosystem | 450,000,000 ZYTC | 45% | Public sale, ecosystem growth, airdrops |
-| Staking Rewards | 250,000,000 ZYTC | 25% | Long-term validator and delegator incentives |
-| Development Fund | 150,000,000 ZYTC | 15% | Protocol R&D, audits, tooling |
-| Team and Founders | 50,000,000 ZYTC | 5% | Core contributors (subject to vesting) |
-| Team Vesting | 50,000,000 ZYTC | 5% | Staged 4-year vesting schedule |
-| Public Goods | 50,000,000 ZYTC | 5% | Open source, research grants |
-
-- **Denom:** `zytc`
-- **Coin Type:** `2823` (BIP-44 custom path)
-- **Min Gas:** `0.001 zytc`
-- **Faucet:** 10 ZYTC per request (from `community_pool`)
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- Go `>= 1.21`
-- [Ignite CLI](https://docs.ignite.com/welcome/install) `v0.27.0`
-- [Rust Toolchain](https://rustup.rs) (required to build the TFHE-rs CGo library)
-- Git
-
-> **First-time setup:** After cloning, run `make build-tfhe` once to compile the
-> TFHE-rs static library before starting the chain. This takes ~30â€“90 minutes
-> on first build (subsequent builds use Cargo's incremental cache).
-
-### Build and Run a Local Node
-
-```bash
-# Clone the repository
-git clone https://github.com/zhaomei/zytherion.git
-cd zytherion
-
-# Start the development chain (includes genesis accounts and faucet)
-ignite chain serve
-```
-
-The node will be live at:
-
-| Service | Endpoint |
-|---------|----------|
-| RPC | `http://localhost:26657` |
-| REST API | `http://localhost:1317` |
-| gRPC | `localhost:9090` |
-| Faucet | `http://localhost:4500` |
-
-### Send Your First Transaction
-
-```bash
-# Check balances
-zytheriond q bank balances <your-address>
-
-# Send ZYTC (signed with Dilithium3 under the hood)
-zytheriond tx bank send alice bob 1000000zytc --chain-id zytherion --fees 1000zytc
-```
-
-### Query Green BFT Metrics
-
-```bash
-# Check carbon savings reported by the network
-zytheriond q greenbft carbon-savings
-
-# List validators with Green Badge status
-zytheriond q greenbft validators --green-only
-```
-
----
-
-## Project Structure
+## Architecture
 
 ```
 zytherion/
-├── app/                    # Core application wiring (app.go, AnteHandler, modules)
-├── cmd/                    # CLI entrypoint (zytheriond)
-├── x/
-│   └── privacy/            # Homomorphic Encryption module (FHE compute + attestation)
-├── proto/                  # Protobuf definitions for all modules
-├── docs/                   # OpenAPI spec and developer documentation
-├── config.yml              # Genesis accounts, validators, faucet configuration
-└── readme.md               # This file
+|-- Makefile                          # Build targets (build-tfhe, build, test, lint)
+|-- tfhe-cgo/                         # Rust FFI crate - TFHE-rs static library
+|   |-- Cargo.toml                    # tfhe = { version = "0.7", features = ["integer", "x86_64-unix"] }
+|   |-- build.sh                      # Compiles libtfhe_cgo.a
+|   `-- src/
+|       `-- lib.rs                    # C-exported FFI: generate_keys, encrypt, decrypt, add, sub, compress, decompress
+`-- x/
+    `-- privacy/                      # Privacy Cosmos SDK module
+        |-- client/
+        |   `-- cli/
+        |       `-- tx_encrypted_transfer.go  # CLI: submit EncryptedTransfer with plaintext amount
+        |-- fhe/
+        |   |-- fhe.go                # FHE Context: NewContext, Encrypt, Decrypt, AddCiphertexts, SubCiphertexts
+        |   |-- tfhe_binding.go       # CGo bridge to libtfhe_cgo.a (real build)
+        |   |-- tfhe_binding_mock.go  # Mock binding (notfhe build tag - no CGo needed)
+        |   |-- tfhe_compress.go      # compressCiphertext / decompressCiphertext wrappers
+        |   |-- tfhe_compress_mock.go # Mock compression
+        |   |-- fhe_mock.go           # Mock FHE context for testing
+        |   `-- fhe_test.go           # Integration tests
+        `-- keeper/
+            |-- keeper.go             # HomomorphicAdd, HomomorphicSub, EncryptAmount, DecryptBalance
+            `-- msg_server_encrypted_transfer.go  # EncryptedTransfer message handler
 ```
 
 ---
 
-## Documentation
+## Technical Stack
 
-| Resource | Link |
-|----------|------|
-| Official Website | [zytherion.pages.dev](https://zytherion.pages.dev) |
-| REST API (OpenAPI) | `http://localhost:1317/static/openapi.yml` |
-| Cosmos SDK Docs | [docs.cosmos.network](https://docs.cosmos.network) |
-| Dilithium3 Spec | [pq-crystals.org/dilithium](https://pq-crystals.org/dilithium/) |
-| FHE Reference | [fhe.org](https://fhe.org) |
-| Ignite CLI Docs | [docs.ignite.com](https://docs.ignite.com) |
+### Rust FFI Layer (tfhe-cgo)
+
+The core cryptographic engine is a **Rust static library** compiled from [Zama's TFHE-rs](https://github.com/zama-ai/tfhe-rs) and linked into the Go node via CGo:
+
+```toml
+# Cargo.toml
+[dependencies]
+tfhe    = { version = "0.7", features = ["integer", "x86_64-unix"] }
+bincode = "1"
+
+[lib]
+crate-type = ["staticlib"]   # -> libtfhe_cgo.a
+
+[profile.release]
+opt-level      = 3
+lto            = true
+codegen-units  = 1
+```
+
+**Exported C functions:**
+
+| Function | Description |
+|----------|-------------|
+| `tfhe_generate_keys` | Generate client/server key pair (serialised with bincode) |
+| `tfhe_encrypt_u64` | Encrypt u64 value to raw ciphertext |
+| `tfhe_decrypt_u64` | Decrypt raw ciphertext to u64 |
+| `tfhe_add` | Homomorphic addition of two ciphertexts |
+| `tfhe_sub` | Homomorphic subtraction of two ciphertexts |
+| `tfhe_compress` | Compress a raw ciphertext to compact form |
+| `tfhe_decompress` | Decompress compact ciphertext to operable form |
+| `tfhe_free_bytes` | Free memory allocated by the library |
+
+### Go FHE Layer (x/privacy/fhe)
+
+The `fhe.Context` struct wraps the CGo calls and provides a clean Go API:
+
+```go
+ctx, _ := fhe.NewContext()           // Generate fresh key pair (~2-10 sec)
+
+ct, _  := ctx.Encrypt(1000)          // Returns compressed ciphertext (~1-5 KB)
+val, _ := ctx.Decrypt(ct)            // val == 1000
+
+sum, _ := ctx.AddCiphertexts(a, b)   // Homomorphic addition
+dif, _ := ctx.SubCiphertexts(a, b)   // Homomorphic subtraction
+```
+
+All operations are **concurrency-safe** (mutex-guarded for arithmetic ops).
+
+### Privacy Keeper (x/privacy/keeper)
+
+The keeper bridges the FHE layer with Cosmos SDK KVStore:
+
+```go
+// Encrypt and store
+k.EncryptAmount(1000)                           // -> compressed TFHE bytes
+
+// Homomorphic balance update (no plaintext ever leaves the keeper)
+k.HomomorphicAdd(ctx, recipientAddr, ctAmount)  // receiverBal += amount
+k.HomomorphicSub(ctx, senderAddr, ctAmount)     // senderBal   -= amount
+
+// Decrypt (only the key holder can do this)
+k.DecryptBalance(ctx, addr)                     // -> uint64
+```
+
+Encrypted balances are stored under `types.EncryptedBalanceKey(addr)` in the module's KVStore. **The keeper never decrypts balances during normal operation.**
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+| Requirement | Version | Notes |
+|------------|---------|-------|
+| Go | >= 1.21 | `go version` |
+| Rust + Cargo | Stable | `rustup toolchain install stable` |
+| Ignite CLI | Latest | `curl https://get.ignite.com/cli! | bash` |
+| GCC / Clang | System default | Required for CGo linking |
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/Zytherion/Zytherion-Blockchain.git
+cd Zytherion-Blockchain
+```
+
+### 2. Build the TFHE Static Library
+
+This compiles the Rust FFI crate into `libtfhe_cgo.a`. **Run this before any Go build.**
+
+```bash
+make build-tfhe
+```
+
+> First build takes 2-5 minutes — Rust must compile TFHE-rs from source.
+
+### 3. Build the Node
+
+```bash
+make build
+# or
+go build ./...
+```
+
+### 4. Run the Chain (Development)
+
+```bash
+ignite chain serve
+```
+
+### 5. Run Tests
+
+```bash
+# Full test suite (requires libtfhe_cgo.a)
+make test
+
+# Tests without CGo (uses mock FHE)
+go test -tags notfhe ./...
+```
+
+---
+
+## CLI Usage
+
+### Send an Encrypted Transfer
+
+The CLI accepts a **plaintext amount** and performs on-the-fly FHE encryption internally:
+
+```bash
+zytherion tx privacy encrypted-transfer [recipient] [amount] \
+  --from [sender-key] \
+  --chain-id zytherion \
+  --gas auto
+```
+
+The amount is encrypted client-side using the node's FHE context before being submitted as `MsgEncryptedTransfer`. Validators and observers only see the encrypted ciphertext bytes.
+
+### Query Encrypted Balance
+
+```bash
+zytherion query privacy encrypted-balance [address]
+```
+
+Returns the raw compressed ciphertext bytes. Decryption requires the private client key.
+
+---
+
+## Security Model
+
+### Privacy Guarantees
+
+| What validators know | What validators do NOT know |
+|---------------------|---------------------------|
+| Transfer occurred (sender -> recipient) | Transfer amount |
+| Sender had a balance | Sender's balance |
+| Recipient received funds | Recipient's balance |
+| Ciphertext size (~1-5 KB) | Any plaintext value |
+
+### Key Management
+
+- **Client key** (`clientKeyBytes`): Secret key — held only by the account owner. MUST NOT be logged, emitted in events, or stored in KVStore.
+- **Server key** (`serverKeyBytes`): Evaluation key — used by the node to perform homomorphic operations. Can be shared with the TFHE-rs computation layer.
+- **Key lifetime**: Keys are currently ephemeral per-process. For production, persist key blobs and reconstruct via `fhe.NewContextFromKeys(ck, sk)`.
+
+### Build Tags
+
+```bash
+# Real TFHE (requires Rust + libtfhe_cgo.a):
+go build ./...
+
+# Mock FHE (CI, testing, no CGo):
+go build -tags notfhe ./...
+```
+
+---
+
+## Development
+
+### Makefile Reference
+
+```bash
+make build-tfhe   # Compile Rust -> libtfhe_cgo.a (run once)
+make build        # build-tfhe + go build ./...
+make test         # go test ./...
+make lint         # golangci-lint run ./...
+```
+
+### Adding a New FHE Operation
+
+1. Add the C FFI function in `tfhe-cgo/src/lib.rs` with `#[no_mangle] pub extern "C"`.
+2. Declare the CGo import in `x/privacy/fhe/tfhe_binding.go`.
+3. Add the mock equivalent in `x/privacy/fhe/tfhe_binding_mock.go` (build tag `notfhe`).
+4. Expose a high-level method on `fhe.Context` in `x/privacy/fhe/fhe.go`.
+5. Run `make build-tfhe && make test`.
 
 ---
 
 ## Roadmap
 
-- [x] **Phase 1** — Cosmos SDK base chain scaffolding
-- [x] **Phase 2** — PQC integration: SHA3-256 hashing + Dilithium3 signatures
-- [x] **Phase 3** — Green BFT: adaptive block times, slashing, carbon metrics
-- [x] **Phase 4** — Homomorphic Encryption module (`x/privacy`)
-- [x] **Phase 5** — Electron dashboard (node controller + PQC wallet)
-- [ ] **Phase 6** — Mainnet genesis launch + validator onboarding
-- [ ] **Phase 7** — IBC connections, cross-chain PQC messaging
-- [ ] **Phase 8** — Full FHE smart contract execution environment
+- [x] TFHE-rs CGo FFI integration (FheUint64)
+- [x] Compressed ciphertext storage (~1-5 KB on-chain)
+- [x] Homomorphic encrypted transfers (Add/Sub in ciphertext space)
+- [x] LWE-SHA3 hybrid block hashing via ABCI 2.0
+- [x] CLI EncryptedTransfer with plaintext input
+- [ ] Persistent key management (key derivation from mnemonic)
+- [ ] Multi-validator FHE threshold decryption
+- [ ] ZK proof integration for balance range proofs
+- [ ] IBC-compatible encrypted cross-chain transfers
+- [ ] TFHE FheUint32 migration for further ciphertext size reduction (~5 KB target)
+- [ ] ZSTD compression at KVStore boundary
 
 ---
 
-## Contributing
+## Links
 
-Contributions are welcome. Here is how to get started:
-
-1. **Fork** the repository and create a feature branch
-2. **Implement** your change (follow Go best practices and Cosmos SDK conventions)
-3. **Test** with `go test ./...` and `ignite chain serve`
-4. **Submit** a Pull Request to the `main` branch with a clear description
-
-Please open an issue before implementing large features so we can align on direction.
-
----
-
-## Community
-
-Stay connected with the Zytherion community:
-
-- **Website:** [zytherion.pages.dev](https://zytherion.pages.dev)
-- **GitHub:** [github.com/zhaomei/zytherion](https://github.com/zhaomei/zytherion)
+| Resource | URL |
+|----------|-----|
+| Official Website | [zytherion.pages.dev](https://zytherion.pages.dev/) |
+| GitHub Repository | [github.com/Zytherion/Zytherion-Blockchain](https://github.com/Zytherion/Zytherion-Blockchain) |
+| Cosmos SDK Docs | [docs.cosmos.network](https://docs.cosmos.network/) |
+| TFHE-rs | [github.com/zama-ai/tfhe-rs](https://github.com/zama-ai/tfhe-rs) |
+| CometBFT | [github.com/cometbft/cometbft](https://github.com/cometbft/cometbft) |
 
 ---
 
 ## License
 
-Zytherion is open-source software released under the **Apache License 2.0**.
-See [LICENSE](LICENSE) for the full license text.
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
 ---
 
 <div align="center">
 
-*Zytherion — Quantum-Safe · Privacy-First · Sustainably Green*
+*Built with love by the Zytherion Team · Powered by TFHE-rs, Cosmos SDK & CometBFT*
 
-Founded by **Rayhan Aziel Abbrar (Zhao Han)**
-
-[![zytherion.pages.dev](https://img.shields.io/badge/zytherion.pages.dev-7C3AED?style=for-the-badge)](https://zytherion.pages.dev)
+**[Visit zytherion.pages.dev](https://zytherion.pages.dev/)**
 
 </div>
