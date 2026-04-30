@@ -30,7 +30,7 @@
 Zytherion is a Layer 1 blockchain that integrates three cutting-edge technologies into a single coherent protocol:
 
 - **Post-Quantum Cryptography (PQC)** — transaction signing with CRYSTALS-Dilithium3 (NIST PQC standard), SHA3-256 block hash commitments
-- **Torus Fully Homomorphic Encryption (TFHE)** — encrypted on-chain balances using LWE-based FHE; validators compute on ciphertext without ever learning plaintext amounts
+- **Threshold Fully Homomorphic Encryption (TFHE)** — encrypted on-chain balances using LWE-based FHE; validators compute on ciphertext without ever learning plaintext amounts
 - **Green BFT** — adaptive commit timeout that reduces validator energy consumption during low-traffic periods by extending block intervals automatically
 
 > **Live demo:** An encrypted transfer of 250,000 ZYTC produces a ~21KB TFHE ciphertext on-chain — down from 376KB with the prior BFV scheme — with no plaintext amount visible in any event or log.
@@ -94,7 +94,7 @@ Zytherion is a Layer 1 blockchain that integrates three cutting-edge technologie
 |---|---|
 | Consensus | CometBFT v0.37 + Green BFT adaptive timeout |
 | Application | Cosmos SDK v0.47 |
-| FHE Scheme | TFHE (Torus FHE, LWE-based) via Lattigo v4 BFV → TFHE migration |
+| FHE Scheme | TFHE (Threshold FHE, LWE-based) via Lattigo v4 BFV → TFHE migration |
 | PQC Signing | CRYSTALS-Dilithium3 (NIST PQC Round 3 winner) |
 | PQC Hashing | SHA3-256 (128-bit Grover-resistant) |
 | Chain ID | `zytherion` |
