@@ -4,12 +4,12 @@
   <h1>Zytherion Blockchain</h1>
 
   <p><strong>A quantum-resistant, privacy-preserving Layer 1 blockchain</strong><br/>
-  built on Cosmos SDK with Torus FHE, Dilithium3 PQC signing, and Green BFT consensus.</p>
+  built on Cosmos SDK with Threshold FHE, Dilithium3 PQC signing, and Green BFT consensus.</p>
 
   <p>
     <img src="https://img.shields.io/badge/Cosmos_SDK-v0.47-5664D2?style=flat-square&logo=cosmos" alt="Cosmos SDK"/>
     <img src="https://img.shields.io/badge/CometBFT-v0.37-blue?style=flat-square" alt="CometBFT"/>
-    <img src="https://img.shields.io/badge/FHE-TFHE_(Torus_LWE)-brightgreen?style=flat-square" alt="TFHE"/>
+    <img src="https://img.shields.io/badge/FHE-TFHE_(Threshold_LWE)-brightgreen?style=flat-square" alt="TFHE"/>
     <img src="https://img.shields.io/badge/PQC-Dilithium3-orange?style=flat-square" alt="Dilithium3"/>
     <img src="https://img.shields.io/badge/Token-ZYTC-gold?style=flat-square" alt="ZYTC"/>
     <img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="License"/>
@@ -282,7 +282,7 @@ The recommended timeout is persisted to KVStore and emitted as ABCI event `green
 ## Security Notes
 
 - **Quantum resistance:** Dilithium3 signing protects against Shor's algorithm. SHA3-256 hashing is Grover-resistant (128-bit quantum security).
-- **FHE scheme:** TFHE is based on Torus-LWE, a post-quantum hardness assumption. Encrypted balances are semantically secure under LWE.
+- **FHE scheme:** TFHE is based on Threshold-LWE, a post-quantum hardness assumption. Encrypted balances are semantically secure under LWE.
 - **Secret key management:** The TFHE secret key is generated per-node at startup and never leaves the node. It is never stored on-chain, never emitted in events, and never logged.
 - **Ciphertext size:** Each encrypted balance entry is approximately 21KB on-chain. This is an inherent property of FHE and is acknowledged in the [whitepaper](https://zytherion.pages.dev/Zytherion_White_Paper.pdf).
 
@@ -337,5 +337,5 @@ MIT License — see [LICENSE](LICENSE) for details.
 <div align="center">
   <img src="https://zytherion.pages.dev/logo_zythc.png" alt="Zytherion" width="48"/>
   <br/>
-  <sub>Built with Cosmos SDK · Secured by Post-Quantum Cryptography · Powered by Torus FHE</sub>
+  <sub>Built with Cosmos SDK · Secured by Post-Quantum Cryptography · Powered by Threshold FHE</sub>
 </div>
