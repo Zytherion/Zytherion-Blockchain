@@ -4,11 +4,10 @@
 
 # Zytherion Blockchain
 
-**A Post-Quantum Privacy Blockchain built on Cosmos SDK**
+**Next-Generation Post-Quantum Privacy Infrastructure**
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
-[![Cosmos SDK](https://img.shields.io/badge/Cosmos%20SDK-v0.47-5C4EE5?style=flat-square)](https://docs.cosmos.network/)
 [![gnark](https://img.shields.io/badge/gnark-Groth16%20%2F%20BN254-FF6B6B?style=flat-square)](https://github.com/ConsenSys/gnark)
 [![Website](https://img.shields.io/badge/Website-zytherion.pages.dev-4CAF50?style=flat-square)](https://zytherion.pages.dev/)
 
@@ -20,7 +19,9 @@
 
 ## 🌐 Overview
 
-**Zytherion** is a privacy-first Layer-1 blockchain built on **Cosmos SDK** and **CometBFT**, combining four cutting-edge cryptographic pillars into one integrated architecture — engineered to withstand quantum-computing threats while preserving fast finality and absolute user privacy.
+**Zytherion** is a privacy-first Layer-1 blockchain that integrates four cutting-edge cryptographic pillars into a single unified architecture. It is engineered to protect user confidentiality and maintain absolute integrity against both classical and quantum-computing threats.
+
+The network utilizes a highly optimized execution environment (built on Cosmos SDK) to achieve fast finality while preserving absolute user privacy.
 
 | Pillar | Technology | Purpose |
 |--------|-----------|---------|
