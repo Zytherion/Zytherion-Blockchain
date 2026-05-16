@@ -7,32 +7,64 @@ option go_package = "zytherion/x/privacy/types";
 service Msg {
   // EncryptedTransfer performs a homomorphic transfer of an encrypted amount
   // from sender to recipient without revealing the plaintext value.
+  // DEPRECATED: use ZKTransfer instead.
   rpc EncryptedTransfer(MsgEncryptedTransfer) returns (MsgEncryptedTransferResponse);
 
   // Deposit converts plaintext bank tokens (sdk.Coin) into an encrypted
-  // balance stored in the privacy module.  The coins are escrowed into the
-  // module account; the encrypted balance is updated homomorphically.
+  // balance stored in the privacy module.
+  // DEPRECATED: use InitCommitment instead.
   rpc Deposit(MsgDeposit) returns (MsgDepositResponse);
+
+  // ZKTransfer performs a private transfer using a Zero-Knowledge proof.
+  rpc ZKTransfer(MsgZKTransfer) returns (MsgZKTransferResponse);
+
+  // InitCommitment initializes a privacy commitment by escrowing plaintext coins.
+  rpc InitCommitment(MsgInitCommitment) returns (MsgInitCommitmentResponse);
 }
 
 // MsgEncryptedTransfer submits a BFV-encrypted amount transfer.
+// DEPRECATED.
 message MsgEncryptedTransfer {
   string sender    = 1;
   string recipient = 2;
-  // Binary-encoded BFV ciphertext (rlwe.Ciphertext.MarshalBinary output).
   bytes  amount_ciphertext = 3;
 }
 
-// MsgEncryptedTransferResponse is empty — the updated ciphertext is on-chain.
+// MsgEncryptedTransferResponse is empty.
 message MsgEncryptedTransferResponse {}
 
 // MsgDeposit converts plaintext bank tokens into a privacy-module encrypted balance.
+// DEPRECATED.
 message MsgDeposit {
-  // creator is the bech32 address of the depositor.
   string creator = 1;
-  // amount is the plaintext coin to deposit, e.g. "1000uzytc".
   string amount  = 2;
 }
 
-// MsgDepositResponse is empty — the updated encrypted balance is on-chain.
+// MsgDepositResponse is empty.
 message MsgDepositResponse {}
+
+// MsgZKTransfer carries a Groth16 proof to perform a private transfer.
+message MsgZKTransfer {
+  string sender = 1;
+  string recipient = 2;
+  bytes sender_new_commitment = 3;
+  bytes recipient_new_commitment = 4;
+  bytes nullifier = 5;
+  bytes zk_proof = 6;
+  bytes public_inputs = 7;
+}
+
+// MsgZKTransferResponse is empty.
+message MsgZKTransferResponse {}
+
+// MsgInitCommitment escrow plaintext coins and registers a ZK commitment.
+message MsgInitCommitment {
+  string creator = 1;
+  string amount = 2;
+  bytes commitment = 3;
+  bytes zk_proof = 4;
+  bytes public_inputs = 5;
+}
+
+// MsgInitCommitmentResponse is empty.
+message MsgInitCommitmentResponse {}

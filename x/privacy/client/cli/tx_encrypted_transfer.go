@@ -1,39 +1,52 @@
+// tx_encrypted_transfer.go — ZK Transfer CLI command.
+//
+// Usage:
+//
+//	zytheriond tx privacy zk-transfer <recipient> --proof proof.json --from <key>
+//
+// The proof.json file is generated off-chain by tools/zkprove:
+//
+//	go run ./tools/zkprove --amount 1000000 --pk keys/proving_key.bin --out proof.json
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
-	"strconv"
+	"os"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	"github.com/spf13/cobra"
 
-	"zytherion/x/privacy/fhe"
+	zkpkg "zytherion/x/privacy/zk"
 	"zytherion/x/privacy/types"
 )
 
-// CmdEncryptedTransfer returns a CLI command to submit an encrypted transfer.
+const flagProofFile = "proof"
+
+// CmdZKTransfer returns a CLI command to submit a ZK-proven private transfer.
 //
 // Usage:
 //
-//	zytheriond tx privacy encrypted-transfer <recipient> <amount> --from <key> [flags]
-//
-// The amount is a raw uint64 plaintext (e.g. token micro-units). The CLI
-// encrypts it on-the-fly using a fresh TFHE context before broadcasting.
-func CmdEncryptedTransfer() *cobra.Command {
+//	zytheriond tx privacy zk-transfer <recipient> --proof proof.json --from <key>
+func CmdZKTransfer() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "encrypted-transfer [recipient] [amount]",
-		Short: "Encrypt an amount on-the-fly and transfer it to a recipient",
-		Long: `Submit an encrypted transfer message.
+		Use:   "zk-transfer [recipient] --proof <proof.json>",
+		Short: "Submit a ZK-proven private transfer",
+		Long: `Submit a private transfer using a pre-generated Groth16 ZK proof.
 
-The amount is provided as a plain integer (uint64). The CLI creates a local
-TFHE context, encrypts the value immediately, and embeds the resulting
-ciphertext in the transaction — no pre-computed ciphertext file required.
+The proof.json file must be generated off-chain using the zkprove tool:
 
-Example:
-  zytheriond tx privacy encrypted-transfer cosmos1xyz... 1000000 --from alice`,
-		Args: cobra.ExactArgs(2),
+  go run ./tools/zkprove --amount 1000000 --pk keys/proving_key.bin --out proof.json
+
+Then submit:
+
+  zytheriond tx privacy zk-transfer cosmos1recipient... --proof proof.json --from alice
+
+No plaintext amount is transmitted. The chain verifies the ZK proof and
+updates on-chain commitments deterministically.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
 			if err != nil {
@@ -42,42 +55,93 @@ Example:
 
 			recipient := args[0]
 
-			// ── 1. Parse plaintext amount ─────────────────────────────────────
-			amount, err := strconv.ParseUint(args[1], 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid amount %q: must be a non-negative integer (uint64): %w", args[1], err)
+			// ── 1. Load proof JSON ─────────────────────────────────────────────
+			proofPath, err := cmd.Flags().GetString(flagProofFile)
+			if err != nil || proofPath == "" {
+				return fmt.Errorf("--proof flag is required (path to proof.json from zkprove tool)")
 			}
 
-			// ── 2. Create a local FHE context and encrypt on-the-fly ──────────
-			// A fresh context is created here (same TFHE parameters as the keeper)
-			// so that the ciphertext is compatible with on-chain homomorphic ops.
-			fmt.Println("Initialising TFHE context and encrypting amount (this may take a moment)...")
-			fheCtx, err := fhe.NewContext()
+			raw, err := os.ReadFile(proofPath)
 			if err != nil {
-				return fmt.Errorf("failed to create FHE context: %w", err)
+				return fmt.Errorf("failed to read proof file %q: %w", proofPath, err)
 			}
 
-			// Encrypt returns compressed bytes
-			ciphertextBytes, err := fheCtx.Encrypt(amount)
+			proofData, err := zkpkg.DecodeProofJSON(raw)
 			if err != nil {
-				return fmt.Errorf("failed to encrypt amount: %w", err)
+				return fmt.Errorf("invalid proof JSON: %w", err)
 			}
 
-			fmt.Printf("Amount %d encrypted (%d bytes). Broadcasting transaction...\n", amount, len(ciphertextBytes))
+			// ── 2. Encode public inputs ────────────────────────────────────────
+			if len(proofData.PublicInputs) < 2 {
+				return fmt.Errorf("proof JSON must contain at least 2 public inputs (CommitmentX, CommitmentY)")
+			}
+			publicInputs, err := zkpkg.EncodePublicInputs(
+				proofData.PublicInputs[0],
+				proofData.PublicInputs[1],
+			)
+			if err != nil {
+				return fmt.Errorf("failed to encode public inputs: %w", err)
+			}
 
-			// ── 3. Build and broadcast the message ────────────────────────────
+			// ── 3. Read sender's own new commitment from JSON ──────────────────
+			// For a transfer, the proof.json contains the sender's NEW commitment.
+			// The recipient's NEW commitment is derived by the prover tool.
+			// In this simplified CLI, we use the same commitment for both
+			// (single-commitment model). A full UTXO model would have two.
+			senderNewCommitment := proofData.Commitment
+			recipientNewCommitment := proofData.Commitment // simplified: prover sets this
+
+			// ── 4. Read nullifier from proof JSON (extended field) ─────────────
+			var nullifier []byte
+			var extended struct {
+				Nullifier []byte `json:"nullifier"`
+			}
+			if err := json.Unmarshal(raw, &extended); err == nil && len(extended.Nullifier) == 32 {
+				nullifier = extended.Nullifier
+			} else {
+				// Derive nullifier from commitment (simplified)
+				nullifier, err = zkpkg.NullifierForTransfer(senderNewCommitment, proofData.Commitment)
+				if err != nil {
+					return fmt.Errorf("failed to derive nullifier: %w", err)
+				}
+			}
+
+			// ── 5. Build and broadcast message ────────────────────────────────
 			sender := clientCtx.GetFromAddress().String()
 
-			msg := types.NewMsgEncryptedTransfer(sender, recipient, ciphertextBytes)
+			msg := types.NewMsgZKTransfer(
+				sender,
+				recipient,
+				senderNewCommitment,
+				recipientNewCommitment,
+				nullifier,
+				proofData.Proof,
+				publicInputs,
+			)
 			if err := msg.ValidateBasic(); err != nil {
 				return err
 			}
 
+			fmt.Printf("Broadcasting ZK transfer to %s (proof: %s)...\n", recipient, proofPath)
 			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
 		},
 	}
 
+	cmd.Flags().String(flagProofFile, "", "Path to proof.json generated by tools/zkprove (required)")
+	_ = cmd.MarkFlagRequired(flagProofFile)
 	flags.AddTxFlagsToCmd(cmd)
 
 	return cmd
+}
+
+// CmdEncryptedTransfer is a deprecated alias that always returns an error.
+// Kept for backward-compat with scripts that reference the old command name.
+func CmdEncryptedTransfer() *cobra.Command {
+	return &cobra.Command{
+		Use:        "encrypted-transfer",
+		Deprecated: "Use 'zk-transfer --proof proof.json' instead. Generate proof with: go run ./tools/zkprove",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("encrypted-transfer is deprecated. Use: zytheriond tx privacy zk-transfer <recipient> --proof proof.json --from <key>")
+		},
+	}
 }

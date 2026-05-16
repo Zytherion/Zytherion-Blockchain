@@ -1,6 +1,7 @@
-package types
-
+// errors.go — Sentinel errors for the x/privacy module.
 // DONTCOVER
+
+package types
 
 import (
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
@@ -13,25 +14,25 @@ var (
 	// ErrInvalidAddress is returned when a bech32 address cannot be decoded.
 	ErrInvalidAddress = sdkerrors.Register(ModuleName, 1101, "invalid address")
 
-	// ErrNoCiphertextProvided is returned when an encrypted transfer carries
-	// no ciphertext bytes for the transferred amount.
-	ErrNoCiphertextProvided = sdkerrors.Register(ModuleName, 1102, "no ciphertext provided")
+	// ErrInvalidZKProof is returned when a ZK proof cannot be deserialized
+	// or the proof field is empty in a ZKTransfer/InitCommitment message.
+	ErrInvalidZKProof = sdkerrors.Register(ModuleName, 1102, "invalid or missing ZK proof")
 
-	// ErrInvalidCiphertext is returned when ciphertext bytes cannot be
-	// deserialised into a valid BFV rlwe.Ciphertext.
-	ErrInvalidCiphertext = sdkerrors.Register(ModuleName, 1103, "invalid ciphertext bytes")
+	// ErrInvalidCommitment is returned when a commitment fails structural
+	// validation (wrong size, out of range, or zero value).
+	ErrInvalidCommitment = sdkerrors.Register(ModuleName, 1103, "invalid commitment bytes")
 
-	// ErrHomomorphicAdd is returned when the BFV homomorphic addition fails
-	// (e.g. mismatched ciphertext levels/parameters).
-	ErrHomomorphicAdd = sdkerrors.Register(ModuleName, 1104, "homomorphic addition failed")
+	// ErrProofVerificationFailed is returned when the Groth16 verifier rejects
+	// the submitted proof — either the proof is malformed or the witness is wrong.
+	ErrProofVerificationFailed = sdkerrors.Register(ModuleName, 1104, "ZK proof verification failed")
 
-	// ErrHomomorphicSub is returned when the BFV homomorphic subtraction fails
-	// (e.g. mismatched ciphertext levels/parameters when deducting from sender).
-	ErrHomomorphicSub = sdkerrors.Register(ModuleName, 1105, "homomorphic subtraction failed")
+	// ErrNoCommitment is returned when an account has no commitment stored
+	// on-chain (analogous to the old ErrNoSenderBalance).
+	ErrNoCommitment = sdkerrors.Register(ModuleName, 1105, "account has no commitment registered")
 
-	// ErrNoSenderBalance is returned when the sender has no encrypted balance
-	// stored on-chain and therefore cannot transfer encrypted funds.
-	ErrNoSenderBalance = sdkerrors.Register(ModuleName, 1106, "sender has no encrypted balance")
+	// ErrNullifierAlreadySpent is returned when a nullifier has already been
+	// recorded on-chain, indicating a double-spend attempt.
+	ErrNullifierAlreadySpent = sdkerrors.Register(ModuleName, 1106, "nullifier already spent — double-spend detected")
 
 	// ErrInvalidDepositAmount is returned when the deposit coin string cannot
 	// be parsed or is not a positive amount.

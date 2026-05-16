@@ -58,6 +58,16 @@ type BlockHashInput struct {
 	// Transactions is the flat list of raw transaction bytes in this block,
 	// in the same order as they appear in the block proposal.
 	Transactions [][]byte
+
+	// PoVLStateRoot is the final state commitment of the Proof of Verifiable Lattices sequence.
+	PoVLStateRoot []byte
+
+	// PoVLProof is the Groth16 ZK-SNARK proof demonstrating the valid execution
+	// of the PoVL sequence.
+	PoVLProof []byte
+
+	// PoVLStepCount is the number of steps N executed in the PoVL sequence.
+	PoVLStepCount uint64
 }
 
 // GenerateBlockHash produces a deterministic, domain-separated 32-byte block
@@ -129,11 +139,22 @@ func canonicalise(input BlockHashInput) []byte {
 	binary.BigEndian.PutUint64(hb[:], uint64(input.Height))
 	buf = append(buf, hb[:]...)
 
+	// 8-byte big-endian PoVL step count
+	var scb [8]byte
+	binary.BigEndian.PutUint64(scb[:], input.PoVLStepCount)
+	buf = append(buf, scb[:]...)
+
 	// 32-byte previous block hash.
 	buf = append(buf, prevHash...)
 
+	// PoVL State Root (must be EXACTLY 32 bytes or 0)
+	buf = append(buf, zeroPad32(input.PoVLStateRoot)...)
+
 	// Application hash from commit of the previous block.
 	buf = append(buf, input.AppHash...)
+
+	// PoVL Proof
+	buf = append(buf, input.PoVLProof...)
 
 	// All transactions in proposal order.
 	for _, tx := range input.Transactions {

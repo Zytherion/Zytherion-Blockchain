@@ -55,3 +55,5 @@ faucet:
   name: community_pool
   coins:
     - 100000000zytc # 10 ZYTC for every request
+
+

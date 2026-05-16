@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -113,9 +114,9 @@ import (
 	"github.com/spf13/cast"
 
 	privacymodule "zytherion/x/privacy"
-	privacymodulefhe "zytherion/x/privacy/fhe"
 	privacymodulekeeper "zytherion/x/privacy/keeper"
 	privacymoduletypes "zytherion/x/privacy/types"
+	privacyzk "zytherion/x/privacy/zk"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	appparams "zytherion/app/params"
@@ -527,15 +528,21 @@ func New(
 		),
 	)
 
-	// ── Privacy Module: FHE context ──────────────────────────────────────────
-	// fheCtx is created ONCE at node startup.  Key generation is expensive
-	// and every ciphertext stored on-chain must be compatible with the same
-	// key pair.  In a production deployment the key pair should be persisted
-	// to disk (or a KMS) and reloaded on restart; for now we generate fresh
-	// keys each boot (suitable for devnet / single-node testing).
-	fheCtx, err := privacymodulefhe.NewContext()
-	if err != nil {
-		panic(fmt.Errorf("failed to initialise FHE context: %w", err))
+	// ── Privacy Module: ZK verifying key ─────────────────────────────────────
+	// Load the Groth16 verifying key from disk. This key is generated once
+	// by `make zksetup` (tools/zksetup) and committed to the repository.
+	// If the file is missing, the node starts in "no-ZK" mode (dev/test only).
+	zkVKPath := filepath.Join(homePath, "keys", "verifying_key.bin")
+	zkVK, zkVKErr := privacyzk.LoadVerifyingKeyBytes(zkVKPath)
+	if zkVKErr != nil {
+		// Also try the repo-relative path (for local dev without $HOME setup).
+		zkVK, zkVKErr = privacyzk.LoadVerifyingKeyBytes("keys/verifying_key.bin")
+	}
+	if zkVKErr != nil {
+		logger.Error("ZK verifying key not found — proof verification disabled (run 'make zksetup')",
+			"error", zkVKErr,
+		)
+		tmos.Exit("FATAL: ZK Verifying Key is missing or corrupted. Refusing to start.")
 	}
 
 	app.PrivacyKeeper = *privacymodulekeeper.NewKeeper(
@@ -544,14 +551,13 @@ func New(
 		keys[privacymoduletypes.MemStoreKey],
 		app.GetSubspace(privacymoduletypes.ModuleName),
 		app.BankKeeper,
-		fheCtx,
+		zkVK,
 	)
 	privacyModule := privacymodule.NewAppModule(appCodec, app.PrivacyKeeper, app.AccountKeeper, app.BankKeeper)
 
 	// ── Crypto subsystem startup self-test ────────────────────────────────────
-	// Prints a clear status banner to the node logger so operators immediately
-	// know whether FHE (BFV/Lattigo) and LWE (Ring-LWE hash) are operational.
-	RunCryptoStartupChecks(logger, fheCtx)
+	// Prints a clear OK/FAIL banner for ZK verifier + LWE hash subsystems.
+	RunCryptoStartupChecks(logger, zkVK)
 
 	// ── Green BFT: Adaptive timeout manager ──────────────────────────────────
 	// Shares the privacy module's KVStore for persisting the suggested timeout.
@@ -776,13 +782,10 @@ func New(
 	app.SetBeginBlocker(app.BeginBlocker)
 	app.SetEndBlocker(app.EndBlocker)
 
-	// ── ABCI 2.0: LWE block proposal handlers ────────────────────────────────
-	// PrepareProposal injects a 104-byte LWE sentinel (magic+version+hash) as
-	// tx[0] before broadcasting the block proposal to peers.
-	// ProcessProposal re-computes the LWE hash from the remaining transactions
-	// and rejects proposals where the hash doesn't match.
-	app.SetPrepareProposal(app.LWEPrepareProposal)
-	app.SetProcessProposal(app.LWEProcessProposal)
+	// ── ABCI 2.0: Block proposal handlers ────────────────────────────────
+	// LWR block proposal handlers for PoVL and deterministic hash injection.
+	app.SetPrepareProposal(app.LWRPrepareProposal)
+	app.SetProcessProposal(app.LWRProcessProposal)
 
 	if loadLatest {
 		if err := app.LoadLatestVersion(); err != nil {
@@ -796,6 +799,41 @@ func New(
 
 	return app
 }
+
+// DeliverTx overrides BaseApp's DeliverTx to intercept the PoVL sentinel transaction.
+// Because the sentinel is a raw byte array and not a valid protobuf transaction,
+// passing it to the normal decoder causes non-deterministic errors.
+// Intercepting it here ensures 100% deterministic LastResultsHash.
+func (app *App) DeliverTx(req abci.RequestDeliverTx) abci.ResponseDeliverTx {
+	if len(req.Tx) >= 8 {
+		magic := binary.BigEndian.Uint32(req.Tx[0:4])
+		// 0x4C575248 is lwrMarkerUint32 from lwr_proposal.go
+		if magic == 0x4C575248 {
+			return abci.ResponseDeliverTx{
+				Code:   0,
+				Data:   nil,
+				Log:    "PoVL Sentinel processed deterministically",
+				Info:   "",
+				Events: nil,
+			}
+		}
+	}
+	return app.BaseApp.DeliverTx(req)
+}
+
+func (app *App) CheckTx(req abci.RequestCheckTx) abci.ResponseCheckTx {
+	if len(req.Tx) >= 8 {
+		magic := binary.BigEndian.Uint32(req.Tx[0:4])
+		if magic == 0x4C575248 {
+			return abci.ResponseCheckTx{
+				Code: 1,
+				Log:  "PoVL Sentinel cannot be submitted via mempool",
+			}
+		}
+	}
+	return app.BaseApp.CheckTx(req)
+}
+
 
 // Name returns the name of the App
 func (app *App) Name() string { return app.BaseApp.Name() }
@@ -1036,10 +1074,10 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 	// register app's OpenAPI routes.
 	docs.RegisterOpenAPIService(Name, apiSvr.Router)
 
-	// ── Privacy: custom decrypt-balance REST endpoint (PoC / demo) ────────────
-	// GET /zytherion/privacy/v1/decrypt-balance/{address}
-	// Uses the node's in-memory TFHE client key to decrypt on-chain balances.
-	app.PrivacyKeeper.RegisterDecryptBalanceRoute(
+	// ── Privacy: custom commitment REST endpoint ────────────
+	// GET /zytherion/privacy/v1/commitment/{address}
+	// Returns the on-chain ZK commitment for an account.
+	app.PrivacyKeeper.RegisterCommitmentRoute(
 		apiSvr.Router,
 		func() sdk.Context { return app.BaseApp.NewContext(true, cmtproto.Header{}) },
 	)

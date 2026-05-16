@@ -144,21 +144,21 @@ func (AppModule) ConsensusVersion() uint64 { return 1 }
 func (am AppModule) BeginBlock(_ sdk.Context, _ abci.RequestBeginBlock) {}
 
 // EndBlock is triggered at the end of every block.
-// It computes the LWE-SHA3 Hybrid block hash for this block and stores it in
-// the privacy module KVStore.  Because the write happens before Commit(), the
+// It computes the LWR-SHA3 Hybrid block hash for this block and stores it in
+// the privacy module KVStore. Because the write happens before Commit(), the
 // stored hash is included in the multistore root — and therefore in the
 // canonical Cosmos AppHash of the NEXT block.
 //
-// Hash algorithm: LWE-SHA3-Hybrid (Ring-LWE, n=256, q=3329)
-// Output: 96-byte fixed-size hash (32-byte seed || 64-byte LWE b-vector)
-// Fallback: SHA3-256 (32-byte) if LWE encounters an unexpected error.
+// Hash algorithm: LWR-SHA3-Hybrid (Ring-LWR, n=256, q=3329, p=256)
+// Output: 96-byte fixed-size hash (32-byte seed || 64-byte LWR b-vector)
+// Fallback: SHA3-256 (32-byte) if LWR encounters an unexpected error.
 //
 // Hash input (canonical):
 //
-//	H_n = LWEHash(CanonicalBlockData_n, H_{n-1})
+//	H_n = LWRHash(CanonicalBlockData_n, H_{n-1})
 //
 // This fulfils the PQC-secured blockchain structure: each block carries a
-// quantum-resistant commitment that chains back to genesis via PrevHash.
+// quantum-resistant deterministic commitment that chains back to genesis via PrevHash.
 func (am AppModule) EndBlock(ctx sdk.Context, req abci.RequestEndBlock) []abci.ValidatorUpdate {
 	store := ctx.KVStore(am.keeper.StoreKey())
 
@@ -179,13 +179,13 @@ func (am AppModule) EndBlock(ctx sdk.Context, req abci.RequestEndBlock) []abci.V
 		AppHash:      appHashPrev,
 	}
 
-	// ── 3. Compute LWE-SHA3 Hybrid hash for this block ───────────────────────
-	// GenerateLWEBlockHashWithFallback attempts the Ring-LWE construction first
+	// ── 3. Compute LWR-SHA3 Hybrid hash for this block ───────────────────────
+	// GenerateLWRBlockHashWithFallback attempts the Ring-LWR construction first
 	// and transparently falls back to SHA3-256 on any error.
-	hashBytes := pqc.GenerateLWEBlockHashWithFallback(input)
+	hashBytes := pqc.GenerateLWRBlockHashWithFallback(input)
 
 	// Determine which algorithm produced the hash (for logging).
-	hashAlgo := pqc.HashAlgorithm // "LWE-SHA3-Hybrid"
+	hashAlgo := pqc.HashAlgorithm // "LWR-SHA3-Hybrid"
 	if len(hashBytes) == pqc.HashSize {
 		hashAlgo = "SHA3-256-Fallback"
 	}

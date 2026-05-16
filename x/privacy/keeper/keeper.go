@@ -9,8 +9,8 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 
-	"zytherion/x/privacy/fhe"
 	"zytherion/x/privacy/types"
+	"zytherion/x/privacy/zk"
 )
 
 type (
@@ -20,7 +20,9 @@ type (
 		memKey     storetypes.StoreKey
 		paramstore paramtypes.Subspace
 		bankKeeper types.BankKeeper
-		fheCtx     *fhe.Context
+		// zkVK holds the serialized Groth16 verifying key loaded at startup.
+		// It is reused for every VerifyTransferProof call — no re-parsing per tx.
+		zkVK []byte
 	}
 )
 
@@ -30,7 +32,7 @@ func NewKeeper(
 	memKey storetypes.StoreKey,
 	ps paramtypes.Subspace,
 	bankKeeper types.BankKeeper,
-	fheCtx *fhe.Context,
+	zkVK []byte,
 ) *Keeper {
 	if !ps.HasKeyTable() {
 		ps = ps.WithKeyTable(types.ParamKeyTable())
@@ -41,7 +43,7 @@ func NewKeeper(
 		memKey:     memKey,
 		paramstore: ps,
 		bankKeeper: bankKeeper,
-		fheCtx:     fheCtx,
+		zkVK:       zkVK,
 	}
 }
 
@@ -53,128 +55,65 @@ func (k Keeper) StoreKey() storetypes.StoreKey {
 	return k.storeKey
 }
 
-func (k Keeper) FHEContext() *fhe.Context {
-	return k.fheCtx
+// ── ZK Verifying Key ──────────────────────────────────────────────────────────
+
+// ZKVerifyingKey returns the raw verifying key bytes.
+func (k Keeper) ZKVerifyingKey() []byte {
+	return k.zkVK
 }
 
-// EncryptAmount encrypts a plaintext uint64 using the TFHE context.
-// Returns TFHE-rs compressed ciphertext bytes (NOT yet ZSTD compressed â€”
-// the caller decides when to store; only SetEncryptedBalance applies ZSTD).
-func (k Keeper) EncryptAmount(amount uint64) ([]byte, error) {
-	if k.fheCtx == nil {
-		return nil, fmt.Errorf("fhe context not initialised in keeper")
+// VerifyTransferProof verifies a Groth16 proof against the chain's verifying key.
+// This is the ONLY on-chain cryptographic call — fully deterministic.
+func (k Keeper) VerifyTransferProof(proofBytes, publicInputs []byte) error {
+	if len(k.zkVK) == 0 {
+		return fmt.Errorf("ZK verifying key not initialised in keeper")
 	}
-	return k.fheCtx.Encrypt(amount)
+	return zk.VerifyTransferProof(proofBytes, publicInputs, k.zkVK)
 }
 
-// HomomorphicAdd adds ctB to addr's stored balance homomorphically.
-// Auto-initialises addr to Enc(0) if no balance exists yet.
-// Internally: load+ZSTD-decompress â†’ AddCiphertexts â†’ ZSTD-compress+store.
-func (k Keeper) HomomorphicAdd(ctx sdk.Context, addr sdk.AccAddress, ctB []byte) error {
-	if k.fheCtx == nil {
-		return fmt.Errorf("fhe context not initialised in keeper")
-	}
-	ctA, found := k.GetEncryptedBalance(ctx, addr)
-	if !found {
-		zero, err := k.EncryptAmount(0)
-		if err != nil {
-			return fmt.Errorf("HomomorphicAdd: init zero balance: %w", err)
-		}
-		ctA = zero
-	}
-	result, err := k.fheCtx.AddCiphertexts(ctA, ctB)
-	if err != nil {
-		return fmt.Errorf("HomomorphicAdd: %w", err)
-	}
-	k.SetEncryptedBalance(ctx, addr, result)
-	return nil
-}
+// ── Commitment store ──────────────────────────────────────────────────────────
 
-// HomomorphicSub subtracts ctB from addr's stored balance homomorphically.
-// Returns error if addr has no balance.
-// Internally: load+ZSTD-decompress â†’ SubCiphertexts â†’ ZSTD-compress+store.
-func (k Keeper) HomomorphicSub(ctx sdk.Context, addr sdk.AccAddress, ctB []byte) error {
-	if k.fheCtx == nil {
-		return fmt.Errorf("fhe context not initialised in keeper")
+// SetCommitment stores a 32-byte ZK commitment for an account.
+// Overwrites any existing commitment (used when updating after a transfer).
+func (k Keeper) SetCommitment(ctx sdk.Context, addr sdk.AccAddress, commitment []byte) error {
+	if err := zk.ValidateCommitmentBytes(commitment); err != nil {
+		return fmt.Errorf("SetCommitment: %w", err)
 	}
-	ctA, found := k.GetEncryptedBalance(ctx, addr)
-	if !found {
-		return fmt.Errorf("HomomorphicSub: no balance for %s", addr.String())
-	}
-	result, err := k.fheCtx.SubCiphertexts(ctA, ctB)
-	if err != nil {
-		return fmt.Errorf("HomomorphicSub: %w", err)
-	}
-	k.SetEncryptedBalance(ctx, addr, result)
-	return nil
-}
-
-// DecryptBalance decrypts the stored balance for addr.
-// Internally: load+ZSTD-decompress â†’ Decrypt.
-func (k Keeper) DecryptBalance(ctx sdk.Context, addr sdk.AccAddress) (uint64, error) {
-	if k.fheCtx == nil {
-		return 0, fmt.Errorf("fhe context not initialised in keeper")
-	}
-	bz, found := k.GetEncryptedBalance(ctx, addr)
-	if !found {
-		return 0, fmt.Errorf("DecryptBalance: no balance for %s", addr.String())
-	}
-	return k.fheCtx.Decrypt(bz)
-}
-
-// SetEncryptedBalance compresses ciphertextBytes with ZSTD then stores it.
-//
-// Storage format: ZSTD( TFHE-rs-compressed-ciphertext )
-// This double-compression reduces on-chain size from ~21KB to ~5KB,
-// cutting gas costs for WritePerByte by ~75%.
-func (k Keeper) SetEncryptedBalance(ctx sdk.Context, addr sdk.AccAddress, ciphertextBytes []byte) {
-	zstdBytes, err := zstdCompressForStore(ciphertextBytes)
-	if err != nil {
-		// Non-fatal: fall back to storing uncompressed with a warning.
-		// This should never happen in practice.
-		k.Logger(ctx).Error("zstd compress failed â€” storing uncompressed",
-			"address", addr.String(),
-			"error", err,
-		)
-		zstdBytes = ciphertextBytes
-	}
-
 	store := ctx.KVStore(k.storeKey)
-	store.Set(types.EncryptedBalanceKey(addr), zstdBytes)
-
-	k.Logger(ctx).Debug("encrypted balance updated",
+	store.Set(types.CommitmentKey(addr), commitment)
+	k.Logger(ctx).Debug("commitment updated",
 		"address", addr.String(),
-		"tfhe_size", len(ciphertextBytes),
-		"stored_size", len(zstdBytes),
-		"compression_ratio", fmt.Sprintf("%.1f%%", 100.0*float64(len(zstdBytes))/float64(len(ciphertextBytes))),
+		"commitment_prefix", fmt.Sprintf("%x", commitment[:4]),
 	)
+	return nil
 }
 
-// GetEncryptedBalance retrieves and ZSTD-decompresses the stored ciphertext.
-// Returns TFHE-rs compressed bytes ready for homomorphic operations.
-//
-// All callers (HomomorphicAdd, HomomorphicSub, DecryptBalance) receive
-// TFHE-rs bytes and are unaware of the ZSTD storage layer.
-func (k Keeper) GetEncryptedBalance(ctx sdk.Context, addr sdk.AccAddress) ([]byte, bool) {
+// GetCommitment retrieves the 32-byte commitment for an account.
+// Returns (nil, false) if no commitment is registered.
+func (k Keeper) GetCommitment(ctx sdk.Context, addr sdk.AccAddress) ([]byte, bool) {
 	store := ctx.KVStore(k.storeKey)
-	bz := store.Get(types.EncryptedBalanceKey(addr))
+	bz := store.Get(types.CommitmentKey(addr))
 	if bz == nil {
 		return nil, false
 	}
-	// Attempt ZSTD decompression. If it fails (e.g. legacy uncompressed data),
-	// return the raw bytes so old balances aren't bricked.
-	decompressed, err := zstdDecompressFromStore(bz)
-	if err != nil {
-		k.Logger(ctx).Error("zstd decompress failed â€” returning raw bytes (legacy?)",
-			"address", addr.String(),
-			"error", err,
-		)
-		return bz, true
-	}
-	return decompressed, true
+	return bz, true
 }
 
-// HasEncryptedBalance reports whether addr has an encrypted balance stored.
-func (k Keeper) HasEncryptedBalance(ctx sdk.Context, addr sdk.AccAddress) bool {
-	return ctx.KVStore(k.storeKey).Has(types.EncryptedBalanceKey(addr))
+// HasCommitment reports whether an account has a registered commitment.
+func (k Keeper) HasCommitment(ctx sdk.Context, addr sdk.AccAddress) bool {
+	return ctx.KVStore(k.storeKey).Has(types.CommitmentKey(addr))
+}
+
+// ── Nullifier store ───────────────────────────────────────────────────────────
+
+// SetNullifier marks a nullifier as spent on-chain.
+// Used to prevent double-spending of the same commitment.
+func (k Keeper) SetNullifier(ctx sdk.Context, nullifier []byte) {
+	store := ctx.KVStore(k.storeKey)
+	store.Set(types.NullifierKey(nullifier), []byte{1})
+}
+
+// HasNullifier returns true if the nullifier has already been spent.
+func (k Keeper) HasNullifier(ctx sdk.Context, nullifier []byte) bool {
+	return ctx.KVStore(k.storeKey).Has(types.NullifierKey(nullifier))
 }

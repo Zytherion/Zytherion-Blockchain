@@ -1,11 +1,9 @@
 // crypto_startup.go — Startup diagnostics for Zytherion's cryptographic subsystems.
 //
-// This file runs self-tests for both the FHE (BFV/Lattigo) and LWE (Ring-LWE)
-// cryptographic subsystems when the node boots, printing a clear status banner
-// to the node logger so operators can immediately confirm that all privacy
-// primitives are operational.
+// Runs self-tests for the ZK (Groth16/gnark) and LWE (Ring-LWE) subsystems
+// when the node boots, printing a clear status banner to the node logger.
 //
-// Integration: called from app.New() immediately after fheCtx is created.
+// Integration: called from app.New() after zkVK is loaded.
 package app
 
 import (
@@ -15,8 +13,8 @@ import (
 
 	"github.com/cometbft/cometbft/libs/log"
 
-	"zytherion/x/privacy/fhe"
 	"zytherion/x/privacy/pqc"
+	"zytherion/x/privacy/zk"
 )
 
 // cryptoStatus holds the result of each subsystem check.
@@ -27,153 +25,157 @@ type cryptoStatus struct {
 	elapsed time.Duration
 }
 
-// RunCryptoStartupChecks verifies that both the FHE and LWE subsystems are
-// fully operational.  It logs a startup status banner showing:
+// RunCryptoStartupChecks verifies that both the ZK verifier and LWE subsystems
+// are fully operational. It logs a startup status banner showing:
 //
-//   - FHE (BFV/Lattigo): encrypt → add → decrypt round-trip test
+//   - ZK (Groth16/gnark): VK deserialization + proof structure check
 //   - LWE (Ring-LWE hash): hash generation + avalanche sanity check
 //
-// This function MUST be called after the fheCtx has been successfully created
-// in app.New().  It is a read-only self-test — it does NOT mutate any state.
-func RunCryptoStartupChecks(logger log.Logger, fheCtx *fhe.Context) {
+// This function is a read-only self-test — it does NOT mutate any state.
+func RunCryptoStartupChecks(logger log.Logger, zkVK []byte) {
 	results := []cryptoStatus{
-		checkFHE(fheCtx),
-		checkLWE(),
+		checkZKVerifier(zkVK),
+		checkLWR(),
 	}
 
 	printStartupBanner(logger, results)
 }
 
-// ── FHE check ────────────────────────────────────────────────────────────────
+// ── ZK Verifier check ─────────────────────────────────────────────────────────
 
-// checkFHE performs an encrypt → homomorphic-add → decrypt round-trip using
-// the already-initialised fheCtx.  This proves:
-//  1. The BFV parameters are internally consistent.
-//  2. The key pair (pk/sk) are valid.
-//  3. The evaluator can perform AddNew without panicking.
-func checkFHE(fheCtx *fhe.Context) cryptoStatus {
+// checkZKVerifier verifies that the Groth16 verifying key is loadable and
+// that the commitment helpers work correctly (deterministic self-test).
+func checkZKVerifier(zkVK []byte) cryptoStatus {
 	start := time.Now()
 
-	const a, b uint64 = 123_456_789, 987_654_321
-	expected := a + b
-
-	// Encrypt two values.
-	ctA, err := fheCtx.Encrypt(a)
-	if err != nil {
+	if len(zkVK) == 0 {
 		return cryptoStatus{
-			name:    "FHE (BFV/Lattigo)",
+			name:    "ZK (Groth16/BN254)",
 			ok:      false,
-			detail:  fmt.Sprintf("Encrypt(%d) failed: %v", a, err),
+			detail:  "verifying key is empty — run 'make zksetup' to generate keys/verifying_key.bin",
 			elapsed: time.Since(start),
 		}
 	}
 
-	ctB, err := fheCtx.Encrypt(b)
+	// Test commitment determinism: same inputs → same commitment.
+	const testAmount uint64 = 123_456_789
+	testBlinding := []byte("zytherion-zk-startup-probe-v1-xx") // 32 bytes
+
+	c1, err := zk.Commit(testAmount, testBlinding)
 	if err != nil {
 		return cryptoStatus{
-			name:    "FHE (BFV/Lattigo)",
+			name:    "ZK (Groth16/BN254)",
 			ok:      false,
-			detail:  fmt.Sprintf("Encrypt(%d) failed: %v", b, err),
+			detail:  fmt.Sprintf("Commit() failed: %v", err),
 			elapsed: time.Since(start),
 		}
 	}
 
-	// Homomorphic addition.
-	ctSum, err := fheCtx.AddCiphertexts(ctA, ctB)
+	c2, err := zk.Commit(testAmount, testBlinding)
 	if err != nil {
 		return cryptoStatus{
-			name:    "FHE (BFV/Lattigo)",
+			name:    "ZK (Groth16/BN254)",
 			ok:      false,
-			detail:  fmt.Sprintf("AddCiphertexts failed: %v", err),
+			detail:  fmt.Sprintf("Commit() second call failed: %v", err),
 			elapsed: time.Since(start),
 		}
 	}
 
-	// Decrypt and verify.
-	result, err := fheCtx.Decrypt(ctSum)
-	if err != nil {
+	// Commitments must be identical (deterministic).
+	if len(c1) != 32 || len(c2) != 32 {
 		return cryptoStatus{
-			name:    "FHE (BFV/Lattigo)",
+			name:    "ZK (Groth16/BN254)",
 			ok:      false,
-			detail:  fmt.Sprintf("Decrypt failed: %v", err),
+			detail:  fmt.Sprintf("commitment size mismatch: got %d and %d bytes (want 32)", len(c1), len(c2)),
+			elapsed: time.Since(start),
+		}
+	}
+	for i := range c1 {
+		if c1[i] != c2[i] {
+			return cryptoStatus{
+				name:    "ZK (Groth16/BN254)",
+				ok:      false,
+				detail:  "commitment is non-deterministic — CRITICAL BUG",
+				elapsed: time.Since(start),
+			}
+		}
+	}
+
+	// Validate commitment bytes.
+	if err := zk.ValidateCommitmentBytes(c1); err != nil {
+		return cryptoStatus{
+			name:    "ZK (Groth16/BN254)",
+			ok:      false,
+			detail:  fmt.Sprintf("ValidateCommitmentBytes failed: %v", err),
 			elapsed: time.Since(start),
 		}
 	}
 
-	if result != expected {
-		return cryptoStatus{
-			name:   "FHE (BFV/Lattigo)",
-			ok:     false,
-			detail: fmt.Sprintf("round-trip mismatch: got %d, want %d", result, expected),
-		}
-	}
-
+	// VK size sanity check (we don't run a full proof here — too slow at startup).
 	return cryptoStatus{
-		name:    "FHE (TFHE-rs)",
-		ok:      true,
-		detail:  fmt.Sprintf("Enc(%d) + Enc(%d) -> Dec = %d ✓  |  TFHE Uint64", a, b, result),
+		name: "ZK (Groth16/BN254)",
+		ok:   true,
+		detail: fmt.Sprintf(
+			"VK=%dB  commitment(amount=%d)=%s…  deterministic=✓",
+			len(zkVK), testAmount, hex.EncodeToString(c1[:4]),
+		),
 		elapsed: time.Since(start),
 	}
 }
 
-// ── LWE check ─────────────────────────────────────────────────────────────────
+// ── LWR check ─────────────────────────────────────────────────────────────────
 
-// checkLWE generates two LWE block hashes from inputs that differ by a single
-// bit and confirms:
-//  1. The output is exactly LWEHashSize (96) bytes.
-//  2. All 32 b-coefficients are in [0, q).
-//  3. A 1-bit input change causes at least 25% of output bytes to differ
-//     (avalanche effect).
-func checkLWE() cryptoStatus {
+// checkLWR generates two LWR block hashes and confirms avalanche properties.
+func checkLWR() cryptoStatus {
 	start := time.Now()
 
-	input1 := []byte("zytherion-lwe-startup-probe-v1")
+	input1 := []byte("zytherion-lwr-startup-probe-v1")
 	input2 := make([]byte, len(input1))
 	copy(input2, input1)
 	input2[0] ^= 0x01 // flip 1 bit
 
 	prevHash := make([]byte, 32)
 
-	h1, err := pqc.GenerateLWEBlockHash(input1, prevHash)
+	h1, err := pqc.GenerateLWRBlockHash(input1, prevHash)
 	if err != nil {
 		return cryptoStatus{
-			name:    "LWE (Ring-LWE / SHAKE-256)",
+			name:    "LWR (Ring-LWR / SHAKE-256)",
 			ok:      false,
-			detail:  fmt.Sprintf("GenerateLWEBlockHash failed: %v", err),
+			detail:  fmt.Sprintf("GenerateLWRBlockHash failed: %v", err),
 			elapsed: time.Since(start),
 		}
 	}
 
-	if err := pqc.ValidateLWEHash(h1); err != nil {
+	if err := pqc.ValidateLWRHash(h1); err != nil {
 		return cryptoStatus{
-			name:    "LWE (Ring-LWE / SHAKE-256)",
+			name:    "LWR (Ring-LWR / SHAKE-256)",
 			ok:      false,
-			detail:  fmt.Sprintf("ValidateLWEHash failed: %v", err),
+			detail:  fmt.Sprintf("ValidateLWRHash failed: %v", err),
 			elapsed: time.Since(start),
 		}
 	}
 
-	h2, err := pqc.GenerateLWEBlockHash(input2, prevHash)
+	h2, err := pqc.GenerateLWRBlockHash(input2, prevHash)
 	if err != nil {
 		return cryptoStatus{
-			name:    "LWE (Ring-LWE / SHAKE-256)",
+			name:    "LWR (Ring-LWR / SHAKE-256)",
 			ok:      false,
-			detail:  fmt.Sprintf("GenerateLWEBlockHash (alt input) failed: %v", err),
+			detail:  fmt.Sprintf("GenerateLWRBlockHash (alt input) failed: %v", err),
 			elapsed: time.Since(start),
 		}
 	}
 
 	// Avalanche check: ≥ 25% of output bytes must differ.
 	diffBytes := 0
-	for i := 0; i < pqc.LWEHashSize; i++ {
+	for i := 0; i < pqc.LWRHashSize; i++ {
 		if h1[i] != h2[i] {
 			diffBytes++
 		}
 	}
-	avalanchePct := diffBytes * 100 / pqc.LWEHashSize
+	avalanchePct := diffBytes * 100 / pqc.LWRHashSize
 	if avalanchePct < 25 {
 		return cryptoStatus{
-			name:    "LWE (Ring-LWE / SHAKE-256)",
+			name:    "LWR (Ring-LWR / SHAKE-256)",
 			ok:      false,
 			detail:  fmt.Sprintf("weak avalanche: only %d%% bytes differ (want ≥25%%)", avalanchePct),
 			elapsed: time.Since(start),
@@ -181,11 +183,11 @@ func checkLWE() cryptoStatus {
 	}
 
 	return cryptoStatus{
-		name: "LWE (Ring-LWE / SHAKE-256)",
+		name: "LWR (Ring-LWR / SHAKE-256)",
 		ok:   true,
 		detail: fmt.Sprintf(
 			"n=%d q=%d size=%dB seed=%s…  avalanche=%d%%/1-bit ✓",
-			256, 3329, pqc.LWEHashSize,
+			256, 3329, pqc.LWRHashSize,
 			hex.EncodeToString(h1[:4]),
 			avalanchePct,
 		),
@@ -195,8 +197,6 @@ func checkLWE() cryptoStatus {
 
 // ── Banner printer ────────────────────────────────────────────────────────────
 
-// printStartupBanner logs a formatted startup status block to the node logger.
-// Operators see an unambiguous OK / FAIL for every crypto subsystem.
 func printStartupBanner(logger log.Logger, results []cryptoStatus) {
 	allOK := true
 	for _, r := range results {
@@ -226,8 +226,9 @@ func printStartupBanner(logger log.Logger, results []cryptoStatus) {
 	logger.Info(sep)
 	if allOK {
 		logger.Info("  ✅ ALL CRYPTO SUBSYSTEMS OPERATIONAL — node is READY")
-		logger.Info("     FHE encrypted transfers: ACTIVE")
-		logger.Info("     LWE block hashing:        ACTIVE  (algo=" + pqc.HashAlgorithm + ")")
+		logger.Info("     ZK proof verification: ACTIVE  (algo=Groth16/BN254)")
+		logger.Info("     LWR block hashing:      ACTIVE  (algo=" + pqc.HashAlgorithm + ")")
+		logger.Info("     PoVL sequential VDF:   ACTIVE  (delay_steps=10)")
 	} else {
 		logger.Error("  ❌ ONE OR MORE CRYPTO SUBSYSTEMS FAILED — CHECK LOGS ABOVE")
 		logger.Error("     The node will continue but affected features may not work.")

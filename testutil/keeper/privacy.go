@@ -13,7 +13,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	typesparams "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/stretchr/testify/require"
-	"zytherion/x/privacy/fhe"
 	"zytherion/x/privacy/keeper"
 	"zytherion/x/privacy/types"
 )
@@ -38,8 +37,9 @@ func PrivacyKeeper(t testing.TB) (*keeper.Keeper, sdk.Context) {
 		"PrivacyParams",
 	)
 
-	fheCtx, err := fhe.NewContext()
-	require.NoError(t, err, "fhe.NewContext must not fail in test setup")
+	// In tests, we use nil zkVK — the keeper will reject all proofs.
+	// For ZK-specific tests, inject a real VK loaded from keys/verifying_key.bin.
+	var zkVK []byte = nil
 
 	k := keeper.NewKeeper(
 		cdc,
@@ -47,7 +47,7 @@ func PrivacyKeeper(t testing.TB) (*keeper.Keeper, sdk.Context) {
 		memStoreKey,
 		paramsSubspace,
 		nil,
-		fheCtx,
+		zkVK,
 	)
 
 	ctx := sdk.NewContext(stateStore, tmproto.Header{}, false, log.NewNopLogger())

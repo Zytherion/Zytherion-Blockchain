@@ -13,10 +13,16 @@ const (
 	// MemStoreKey defines the in-memory store key
 	MemStoreKey = "mem_privacy"
 
-	// EncryptedBalanceKeyPrefix is the KVStore key prefix for encrypted balances.
-	// Full key: EncryptedBalanceKeyPrefix | address_bytes
-	// The value is a serialised EncryptedCiphertext protobuf.
-	EncryptedBalanceKeyPrefix = "enc_balance/"
+	// CommitmentKeyPrefix is the KVStore key prefix for ZK commitments.
+	// Full key: CommitmentKeyPrefix | address_bytes
+	// The value is a raw 32-byte MiMC commitment (BN254 Fr element).
+	CommitmentKeyPrefix = "commitment/"
+
+	// NullifierKeyPrefix is the KVStore key prefix for spent nullifiers.
+	// Full key: NullifierKeyPrefix | nullifier_bytes (32 bytes)
+	// The value is a 1-byte sentinel ([]byte{1}) — we only need existence.
+	// Nullifiers prevent double-spending of the same commitment.
+	NullifierKeyPrefix = "nullifier/"
 
 	// PQCBlockHashKeyPrefix is the KVStore key prefix for PQC block hashes.
 	// Full key: PQCBlockHashKeyPrefix | big-endian int64 block height
@@ -34,13 +40,23 @@ func KeyPrefix(p string) []byte {
 	return []byte(p)
 }
 
-// EncryptedBalanceKey returns the full KVStore key for an account's encrypted
-// balance.  Using the raw AccAddress bytes keeps the key compact and avoids
+// CommitmentKey returns the full KVStore key for an account's ZK commitment.
+// Using the raw AccAddress bytes keeps the key compact and avoids
 // any bech32 parsing at read time.
-func EncryptedBalanceKey(addr []byte) []byte {
-	prefix := KeyPrefix(EncryptedBalanceKeyPrefix)
+func CommitmentKey(addr []byte) []byte {
+	prefix := KeyPrefix(CommitmentKeyPrefix)
 	key := make([]byte, len(prefix)+len(addr))
 	copy(key, prefix)
 	copy(key[len(prefix):], addr)
+	return key
+}
+
+// NullifierKey returns the full KVStore key for a spent nullifier.
+// The nullifier is 32 bytes (BN254 Fr element).
+func NullifierKey(nullifier []byte) []byte {
+	prefix := KeyPrefix(NullifierKeyPrefix)
+	key := make([]byte, len(prefix)+len(nullifier))
+	copy(key, prefix)
+	copy(key[len(prefix):], nullifier)
 	return key
 }

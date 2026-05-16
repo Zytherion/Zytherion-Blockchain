@@ -30,6 +30,16 @@ type Block struct {
 	// It commits this block's content to the chain and is stored in the
 	// next block's PrevHash field.
 	Hash []byte
+
+	// PoVLStateRoot is the final state commitment of the Proof of Verifiable Lattices sequence.
+	PoVLStateRoot []byte
+
+	// PoVLProof is the Groth16 ZK-SNARK proof demonstrating the valid execution
+	// of the PoVL sequence.
+	PoVLProof []byte
+
+	// PoVLStepCount is the number of steps N executed in the PoVL sequence.
+	PoVLStepCount uint64
 }
 
 // SignedBlock pairs a Block with the validator's Dilithium3 signature over
@@ -43,29 +53,30 @@ type SignedBlock struct {
 	ValidatorSignature []byte
 }
 
-// NewBlock constructs a Block and immediately computes its hash.
-//
-// prevHash should be HashSize (32) bytes; shorter slices are zero-padded.
-// Pass a nil or zero slice for prevHash at height 1 (first block after genesis).
 func NewBlock(height int64, prevHash, appHash []byte, txs [][]byte) Block {
 	b := Block{
 		Height:       height,
 		PrevHash:     zeroPad32(prevHash),
 		AppHash:      appHash,
 		Transactions: txs,
+		// In a real network, these would be populated from the consensus mechanism.
+		PoVLStateRoot: make([]byte, PoVLStateSize),
+		PoVLProof:     make([]byte, 0),
+		PoVLStepCount: 0,
 	}
 	b.Hash = b.computeHash()
 	return b
 }
 
-// computeHash recomputes and returns the SHA3-256 block hash.
-// Called internally by NewBlock; call again only after mutating fields.
 func (b *Block) computeHash() []byte {
 	return GenerateBlockHash(BlockHashInput{
-		Height:       b.Height,
-		PrevHash:     b.PrevHash,
-		AppHash:      b.AppHash,
-		Transactions: b.Transactions,
+		Height:        b.Height,
+		PrevHash:      b.PrevHash,
+		AppHash:       b.AppHash,
+		Transactions:  b.Transactions,
+		PoVLStateRoot: b.PoVLStateRoot,
+		PoVLProof:     b.PoVLProof,
+		PoVLStepCount: b.PoVLStepCount,
 	})
 }
 

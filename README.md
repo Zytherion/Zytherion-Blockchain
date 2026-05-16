@@ -8,12 +8,11 @@
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)](https://golang.org/)
-[![Rust Edition](https://img.shields.io/badge/Rust-2021%20Edition-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Cosmos SDK](https://img.shields.io/badge/Cosmos%20SDK-v0.47-5C4EE5?style=flat-square)](https://docs.cosmos.network/)
-[![TFHE-rs](https://img.shields.io/badge/TFHE--rs-v0.7-FF6B6B?style=flat-square)](https://github.com/zama-ai/tfhe-rs)
+[![gnark](https://img.shields.io/badge/gnark-Groth16%20%2F%20BN254-FF6B6B?style=flat-square)](https://github.com/ConsenSys/gnark)
 [![Website](https://img.shields.io/badge/Website-zytherion.pages.dev-4CAF50?style=flat-square)](https://zytherion.pages.dev/)
 
-*Encrypted transfers. Homomorphic balances. Quantum-resistant future.*
+*Zero-Knowledge Privacy. Quantum-Resistant Integrity. Green Consensus.*
 
 </div>
 
@@ -21,20 +20,23 @@
 
 ## 🌐 Overview
 
-**Zytherion** is a privacy-first blockchain built on the **Cosmos SDK**, combining three cutting-edge cryptographic pillars to deliver a chain where account balances remain encrypted end-to-end — even from validators.
+**Zytherion** is a privacy-first Layer-1 blockchain built on **Cosmos SDK** and **CometBFT**, combining four cutting-edge cryptographic pillars into one integrated architecture — engineered to withstand quantum-computing threats while preserving fast finality and absolute user privacy.
 
 | Pillar | Technology | Purpose |
 |--------|-----------|---------|
-| 🔐 **Fully Homomorphic Encryption** | TFHE-rs v0.7 (`FheUint64`) via CGo FFI | Encrypted balance arithmetic on-chain |
-| 🛡️ **Post-Quantum Cryptography** | LWE-SHA3-Hybrid Block Hashing | Quantum-resistant block integrity |
+| 🔐 **Zero-Knowledge Proofs** | Groth16 / BN254 via gnark (Go) | Private transaction verification (~128-byte proofs) |
+| 🛡️ **Post-Quantum Cryptography** | Ring-LWR Deterministic Hashing | Quantum-resistant block integrity |
+| ⏱️ **Proof of Verifiable Lattices** | PoVL — Sequential VDF on LWR | Anti-manipulation network clock |
 | 🌿 **Green BFT Consensus** | CometBFT + ABCI 2.0 | Energy-efficient Byzantine fault tolerance |
 
 > [!NOTE]
-> **🔐 FHE** — Validators process `EncryptedTransfer` transactions without ever seeing plaintext amounts. The chain state stores only TFHE ciphertexts.
+> **🔐 ZK Privacy** — Users generate off-chain Groth16 proofs over transaction values. The chain stores only the ~128-byte proof + public commitment — no plaintext ever touches the chain.
 >
-> **🛡️ PQC** — Every block carries an LWE-SHA3-Hybrid sentinel injected at the ABCI layer, making block hashes resistant to quantum adversaries.
+> **🛡️ PQC** — Every block carries a Ring-LWR–based hash sentinel, making block integrity resistant to Grover's algorithm on quantum computers.
 >
-> **🌿 Green BFT** — CometBFT consensus is wired with ABCI 2.0 `PrepareProposal` / `ProcessProposal` hooks, keeping the chain both secure and energy-efficient.
+> **⏱️ PoVL** — A Sequential Verifiable Delay Function built on LWR. Proposers must compute it; all validators verify it. Invalid PoVL proofs cause immediate block rejection.
+>
+> **🌿 Green BFT** — ABCI 2.0 `PrepareProposal` / `ProcessProposal` hooks enforce all cryptographic layers while keeping the network energy-efficient.
 
 ---
 
@@ -42,71 +44,110 @@
 
 ```
 zytherion/
-├── tfhe-cgo/               # Rust FFI crate — TFHE-rs static library
-│   ├── src/lib.rs          # C-ABI exports: generate_keys, encrypt, decrypt, add, sub, compress
-│   ├── Cargo.toml          # tfhe v0.7, bincode, staticlib target
-│   └── build.sh            # Cargo build → libtfhe_cgo.a
-│
-├── x/privacy/              # Cosmos SDK privacy module
-│   ├── fhe/                # Go FHE layer (wraps CGo bindings)
-│   │   ├── fhe.go          # Context, Encrypt/Decrypt, AddCiphertexts, SubCiphertexts
-│   │   ├── tfhe_binding.go # Raw CGo call wrappers
-│   │   ├── tfhe_compress.go# Compress/decompress ciphertext helpers
-│   │   ├── fhe_mock.go     # Mock implementation for unit tests (build tag: notfhe)
-│   │   └── fhe_test.go     # Roundtrip and arithmetic tests
+├── x/privacy/                  # Cosmos SDK privacy module
+│   ├── keeper/
+│   │   ├── keeper.go           # Store operations & ZK commitment state
+│   │   └── msg_server_init_commitment.go  # MsgInitCommitment — ZK proof verify + store
 │   │
-│   ├── keeper/             # Module keeper
-│   │   ├── keeper.go       # Store operations, HomomorphicAdd/Sub, EncryptAmount
-│   │   └── msg_server_encrypted_transfer.go  # MsgEncryptedTransfer handler
+│   ├── zk/
+│   │   └── keys.go             # Load & validate Groth16 Verifying Key at startup
 │   │
-│   └── client/cli/         # CLI commands
-│       └── tx.go           # CmdEncryptedTransfer (accepts plaintext amount, encrypts on-the-fly)
+│   ├── types/
+│   │   └── keys.go             # Store key prefixes
+│   │
+│   └── ante/
+│       └── pqc_ante.go         # PQCAnteDecorator — SIMD-accelerated PQC tx screening
 │
-└── Makefile                # build-tfhe, build, test, lint targets
+├── app/
+│   ├── lwr_proposal.go         # ABCI 2.0 PrepareProposal / ProcessProposal
+│   │                           # — PoVL computation, LWR-SHA3 block hashing
+│   └── app.go                  # Application wiring
+│
+├── zkprove/                    # Off-chain Groth16 prover tool (Go binary)
+│   └── main.go                 # Generates proof + public inputs for MsgInitCommitment
+│
+├── zksetup/                    # Trusted setup — generates proving & verifying keys
+│   └── main.go
+│
+├── zk_artifacts/               # Committed ZK artifacts
+│   ├── commitment.vk           # Groth16 Verifying Key (committed to repo)
+│   └── commitment.pk           # Proving Key (large, for prover use only)
+│
+└── Makefile                    # build, test, zk-setup, zk-prove targets
 ```
 
 ---
 
 ## 🔬 Core Features
 
-### 🔒 Homomorphic Encrypted Transfers
+### 🔐 Zero-Knowledge Privacy (Groth16 / BN254)
 
-The `EncryptedTransfer` message lets users transfer funds without revealing the amount to anyone — including validators and full nodes.
+Users prove knowledge of a private value without revealing it on-chain. The `MsgInitCommitment` transaction accepts a Groth16 proof and public commitment; the node verifies the proof and stores only the commitment.
 
-**Transfer flow (all operations in ciphertext space):**
+**ZK Transaction Flow:**
 
 ```
-1. Validate sender & recipient addresses
-2. Reject sender if no encrypted balance exists
-3. sender_balance   = Enc(sender_bal)   − Enc(amount)    ← HomomorphicSub
-4. recipient_balance = Enc(recv_bal)    + Enc(amount)    ← HomomorphicAdd
-5. Emit EventTypeEncryptedTransfer (no amounts in event)
+1. [Off-chain] User runs `zkprove` tool with secret value → generates proof + public inputs
+2. [Client]    User submits MsgInitCommitment { proof_bytes, public_inputs }
+3. [Node]      PQCAnteDecorator screens the tx (SIMD PQC verification)
+4. [Node]      ZK Verifier loads commitment.vk → verifies Groth16 proof
+5. [Node]      If valid → stores commitment in KVStore
+6. [Node]      If invalid → tx rejected, no state change
 ```
 
-No plaintext is ever computed server-side. Validators learn only: *"a transfer occurred from A to B."*
+| Property | Value |
+|----------|-------|
+| Proving System | Groth16 |
+| Elliptic Curve | BN254 (alt-bn128) |
+| ZK Library | gnark (Go) |
+| Proof Size | ~128 bytes |
+| Verification | O(1) — constant time |
 
-### 🦀 TFHE-rs via CGo FFI
+> [!IMPORTANT]
+> **Fail-Fast Security:** Zytherion nodes will **panic on startup** if `commitment.vk` is missing or corrupted. This prevents any node from running in a security-compromised state.
 
-The `tfhe-cgo` crate compiles to a **static C library** (`libtfhe_cgo.a`) exposing these functions:
+### 🛡️ Ring-LWR Post-Quantum Block Hashing
 
-| C Function | Description |
+Each block carries a deterministic LWR-based hash sentinel injected at the ABCI layer, anchoring block integrity against quantum adversaries.
+
+**Construction:**
+
+$$b = \left\lfloor \frac{p}{q} \cdot (A \cdot s) \right\rfloor \mod p$$
+
+$$H_n = \text{SHA3-256}(\text{LWR}(data_n) \| H_{n-1})$$
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Ring dimension `n` | 256 | Polynomial coefficients |
+| Prime modulus `q` | 3329 | Kyber-compatible |
+| Rounding modulus `p` | 256 | 1 byte/coefficient output |
+| Output size | 96 bytes | 32B seed + 64B vector b |
+
+Implementation uses **pure integer arithmetic** (no floating-point) — guaranteeing bit-identical results across all CPU architectures. This ensures `LastResultsHash` is always consistent across all validator nodes.
+
+### ⏱️ Proof of Verifiable Lattices (PoVL)
+
+PoVL acts as a **Sequential Verifiable Delay Function (VDF)** built on LWR. Each block carries a sequential computation proof that cannot be parallelized or skipped.
+
+**Chain Construction (N steps):**
+
+$$\text{state}_n = \text{SHA3-256}(\text{LWRHash}(\text{state}_{n-1}) \| \text{state}_{n-1})$$
+
+$$\text{PoVLRoot} = \text{state}_N = f^N(\text{state}_0)$$
+
+**ABCI 2.0 Integration:**
+1. **PrepareProposal:** Block proposer computes `PoVLRoot` over N sequential steps.
+2. **ProcessProposal:** All validators verify `PoVLRoot` before casting votes. Blocks without a valid PoVL are **immediately rejected (REJECT)**.
+
+Default configuration: **N = 10 steps per block**.
+
+### 🌿 Green BFT Consensus
+
+| Enhancement | Description |
 |------------|-------------|
-| `tfhe_generate_keys` | Generate client + server key pair (bincode-serialized) |
-| `tfhe_encrypt_u64` | Encrypt a `u64` → raw ciphertext (~30–50 KB) |
-| `tfhe_decrypt_u64` | Decrypt raw ciphertext → `u64` |
-| `tfhe_add` | Homomorphic addition of two raw ciphertexts |
-| `tfhe_sub` | Homomorphic subtraction of two raw ciphertexts |
-| `tfhe_compress` | Compress raw ciphertext → compact form (~1–5 KB) |
-| `tfhe_decompress` | Decompress compact ciphertext → operable form |
-| `tfhe_free_bytes` | Free heap-allocated output buffers |
-
-The Go `fhe.Context` wraps these bindings and implements a **compress-on-store** strategy:
-- All ciphertexts persisted in the KVStore are **compressed** (~1–5 KB vs ~30–50 KB raw)
-- Arithmetic ops decompress → compute → recompress transparently
-
-### 🌐 LWE-SHA3-Hybrid Block Hashing (PQC)
-
-Each block is anchored with an LWE-based post-quantum hash sentinel injected via **ABCI 2.0** (`PrepareProposal` / `ProcessProposal`). The audit hash is persisted in the PrivacyKeeper store and rolled into `AppHash`, providing quantum-resistant block integrity.
+| **PQC SIMD AnteDecorator** | Screens all incoming transactions with SIMD-accelerated PQC verification before any gas is spent |
+| **Adaptive Timeout** | Block timeout is dynamically adjusted based on recent tx volume — empty blocks do not consume a full round |
+| **Deterministic DeliverTx** | PoVL sentinel is injected at the `DeliverTx` override layer, guaranteeing identical `LastResultsHash` across all nodes |
 
 ---
 
@@ -117,11 +158,10 @@ Each block is anchored with an LWE-based post-quantum hash sentinel injected via
 | Tool | Version | Install |
 |------|---------|---------|
 | Go | ≥ 1.21 | [golang.org/dl](https://golang.org/dl/) |
-| Rust + Cargo | stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | Ignite CLI | latest | [docs.ignite.com](https://docs.ignite.com/welcome/install) |
-| GCC / glibc | system | Required for CGo linking |
+| GCC / glibc | system | Required for CGo (gnark uses it internally) |
 
-> ⚠️ **Linux only** — the Rust crate targets `x86_64-unix` TFHE-rs features. macOS and Windows are not supported without modification.
+> ⚠️ **Linux recommended** — tested on `x86_64-linux`. macOS may work with minor adjustments. Windows requires WSL2.
 
 ---
 
@@ -132,17 +172,16 @@ git clone https://github.com/Zytherion/Zytherion-Blockchain.git
 cd Zytherion-Blockchain
 ```
 
-### 2. Build the TFHE-rs Static Library
+### 2. Generate ZK Trusted Setup (one-time)
 
-> ⏱️ This step compiles Rust with `lto = true` and `opt-level = 3`. **Expect 30–90 minutes** on first run.
+> ⏱️ This generates the Groth16 proving and verifying keys. **Only required if `zk_artifacts/` is not already committed.**
 
 ```bash
-make build-tfhe
+make zk-setup
+# outputs: zk_artifacts/commitment.pk and zk_artifacts/commitment.vk
 ```
 
-This runs `cargo build --release` inside `tfhe-cgo/` and copies the resulting `libtfhe_cgo.a` to `x/privacy/fhe/lib/`.
-
-### 3. Build All Go Packages
+### 3. Build Go Packages
 
 ```bash
 make build
@@ -158,52 +197,60 @@ ignite chain serve
 ### 5. Run Tests
 
 ```bash
-# Full test suite (requires libtfhe_cgo.a)
+# Full test suite
 make test
 
-# Fast unit tests without CGo (uses mock FHE)
-go test -tags notfhe ./...
+# Run without ZK integration (fast unit tests)
+go test ./...
 ```
 
 ---
 
-## 💡 Usage — Encrypted Transfer CLI
+## 💡 Usage — Private Commitment CLI
 
-The CLI accepts a **plaintext amount** and encrypts it locally before submitting the transaction:
+### Step 1: Generate a ZK Proof (off-chain)
 
 ```bash
-# Send 1000 tokens from alice to bob (amount is encrypted client-side)
-zytherion tx privacy encrypted-transfer cosmos1bob... 1000 \
+# Generate a Groth16 proof for a secret value (e.g., 1000)
+go run ./zkprove --secret 1000 --pk zk_artifacts/commitment.pk --out proof.json
+```
+
+This produces `proof.json` containing the proof bytes and public inputs.
+
+### Step 2: Submit the Commitment On-chain
+
+```bash
+zytherion tx privacy init-commitment \
+  --proof-file proof.json \
   --from alice \
   --chain-id zytherion \
   --yes
 ```
 
-> The node receives only the FHE ciphertext — the plaintext `1000` never leaves the client machine.
+> The node receives only the ~128-byte Groth16 proof and the public commitment hash. The secret value (`1000`) **never leaves the client machine**.
 
 ---
 
 ## 🔑 Key Concepts
 
-### Compressed Ciphertext Storage
+### ZK Artifact Security Model
 
-| State | Size |
-|-------|------|
-| Raw `FheUint64` ciphertext | ~30–50 KB |
-| Compressed `FheUint64` ciphertext | ~1–5 KB |
-| On-chain KVStore entry | **~1–5 KB** ✅ |
+| Artifact | Size | Committed to Repo | Purpose |
+|----------|------|-------------------|---------|
+| `commitment.vk` | ~1 KB | ✅ Yes | Node startup verification — must be present |
+| `commitment.pk` | ~10–100 MB | ❌ No (gitignored) | Off-chain proof generation by users |
 
-Compression uses TFHE-rs's built-in `compress()` / `decompress()` API, reducing storage overhead by **~10×** with zero security loss.
+The **Verifying Key (VK) is committed to the repository** so all nodes use the same trusted setup. The Proving Key is large and only needed by users who want to generate proofs.
 
-### Mock Build Tag
+### Layered Security Stack
 
-For CI pipelines or machines without a Rust toolchain, build with `-tags notfhe`:
-
-```bash
-go test -tags notfhe ./...
 ```
-
-This swaps in `fhe_mock.go` and `tfhe_binding_mock.go`, which implement plaintext arithmetic behind the same `fhe.Context` interface — no `libtfhe_cgo.a` required.
+Layer 1: Ring-LWR (PQC)          → Quantum-resistant block integrity
+Layer 2: PoVL (VDF)              → Sequential anti-manipulation clock
+Layer 3: ZK-SNARKs (Groth16)    → Transaction privacy
+Layer 4: Green BFT (CometBFT)   → Consensus finality
+Layer 5: Fail-Fast ZK VK        → Node startup integrity guard
+```
 
 ---
 
@@ -214,10 +261,10 @@ This swaps in `fhe_mock.go` and `tfhe_binding_mock.go`, which implement plaintex
 | Property | Value |
 |----------|-------|
 | **Token Name** | Zytherion |
-| **Ticker** | `ZYT` |
-| **Total Supply** | 1,000,000,000 ZYT (1 Billion) |
-| **Decimals** | 6 (1 ZYT = 1,000,000 uzyt) |
-| **Chain Denom** | `uzyt` |
+| **Ticker** | `ZYTC` |
+| **Total Supply** | 1,000,000,000 ZYTC (1 Billion) |
+| **Decimals** | 6 (1 ZYTC = 1,000,000 uzytc) |
+| **Chain Denom** | `uzytc` |
 | **Consensus** | Green BFT (CometBFT) |
 | **Block Time** | ~5 seconds |
 
@@ -225,22 +272,20 @@ This swaps in `fhe_mock.go` and `tfhe_binding_mock.go`, which implement plaintex
 
 ### 📊 Supply Distribution
 
-| Allocation | % | Amount (ZYT) | Purpose |
-|------------|---|-------------|---------|
-| 🌱 **Ecosystem & Grants** | 30% | 300,000,000 | Developer grants, dApp incentives, hackathons |
-| 🔐 **Privacy Staking Rewards** | 25% | 250,000,000 | Validator & delegator staking emissions |
-| 👥 **Team & Contributors** | 15% | 150,000,000 | Core team, subject to 4-year vesting |
-| 🏦 **Treasury & Reserve** | 15% | 150,000,000 | Protocol-controlled reserve, DAO-governed |
-| 🚀 **Public Sale / TGE** | 10% | 100,000,000 | Community token generation event |
-| 🤝 **Strategic Partners** | 5% | 50,000,000 | Early backers and strategic investors |
+| Allocation | % | Amount (ZYTC) | Purpose |
+|------------|---|--------------|---------|
+| 🌱 **Community Pool / Public Sale** | 45% | 450,000,000 | Ecosystem, dApp incentives, adoption |
+| 🔐 **Staking Rewards** | 25% | 250,000,000 | Validator & delegator staking emissions |
+| 🏗️ **Development Fund** | 15% | 150,000,000 | Protocol development |
+| 👥 **Team & Founders** | 10% | 100,000,000 | Long-term vesting |
+| 🌍 **Public Goods Funding** | 5% | 50,000,000 | Community grants |
 
 ```
-  Ecosystem & Grants  ████████████ 30%
-  Staking Rewards     ██████████   25%
-  Team                ██████       15%
-  Treasury            ██████       15%
-  Public Sale         ████         10%
-  Strategic Partners  ██            5%
+  Community Pool      ██████████████████ 45%
+  Staking Rewards     ██████████         25%
+  Development Fund    ██████             15%
+  Team & Founders     ████               10%
+  Public Goods        ██                  5%
 ```
 
 ---
@@ -249,12 +294,12 @@ This swaps in `fhe_mock.go` and `tfhe_binding_mock.go`, which implement plaintex
 
 | Allocation | Cliff | Vesting Duration | TGE Unlock |
 |------------|-------|-----------------|------------|
-| Team & Contributors | 12 months | 48 months (linear) | 0% |
+| Team & Founders | 12 months | 48 months (linear) | 0% |
 | Strategic Partners | 6 months | 24 months (linear) | 5% |
-| Ecosystem & Grants | None | 36 months (milestone) | 10% |
+| Development Fund | None | 36 months (milestone) | 10% |
 | Public Sale | None | 12 months (linear) | 20% |
 | Staking Rewards | None | Emitted over ~10 years | — |
-| Treasury | None | DAO-governed | 0% |
+| Community Pool | None | DAO-governed | 0% |
 
 ---
 
@@ -262,25 +307,25 @@ This swaps in `fhe_mock.go` and `tfhe_binding_mock.go`, which implement plaintex
 
 | Use Case | Description |
 |----------|-------------|
-| **Staking** | Stake ZYT to run or delegate to validators; earn staking rewards |
-| **Gas Fees** | Pay transaction fees in `uzyt` for all on-chain operations including `EncryptedTransfer` |
+| **Staking** | Stake ZYTC to run or delegate to validators; earn staking rewards |
+| **Gas Fees** | Pay transaction fees in `uzytc` for all on-chain operations including `MsgInitCommitment` |
 | **Governance** | Vote on protocol upgrades, parameter changes, and treasury spending |
-| **Privacy Pool Access** | Future: stake ZYT to participate in anonymous liquidity pools |
-| **FHE Key Escrow** | Future: deposit ZYT as collateral for threshold key management services |
+| **ZK Pool Access** | Future: stake ZYTC to participate in anonymous ZK liquidity pools |
+| **Key Escrow** | Future: deposit ZYTC as collateral for threshold commitment management |
 
 ---
 
 ### 📈 Emission Schedule
 
-Staking rewards follow a **halving model** similar to Bitcoin, adjusted to a 5-second block time:
+Staking rewards follow a **halving model** adjusted to a 5-second block time:
 
 | Year | Annual Emission | Cumulative Circulating |
 |------|----------------|------------------------|
-| Year 1 | 50,000,000 ZYT | ~380,000,000 ZYT |
-| Year 2 | 40,000,000 ZYT | ~470,000,000 ZYT |
-| Year 3 | 30,000,000 ZYT | ~550,000,000 ZYT |
-| Year 4 | 25,000,000 ZYT | ~625,000,000 ZYT |
-| Year 5+ | Decreasing (halving every 4 years) | → 1,000,000,000 ZYT |
+| Year 1 | 50,000,000 ZYTC | ~380,000,000 ZYTC |
+| Year 2 | 40,000,000 ZYTC | ~470,000,000 ZYTC |
+| Year 3 | 30,000,000 ZYTC | ~550,000,000 ZYTC |
+| Year 4 | 25,000,000 ZYTC | ~625,000,000 ZYTC |
+| Year 5+ | Decreasing (halving every 4 years) | → 1,000,000,000 ZYTC |
 
 > [!IMPORTANT]
 > All tokenomics parameters are subject to on-chain governance votes before mainnet launch. The DAO can adjust emission rates, vesting schedules, and treasury allocations.
@@ -289,17 +334,21 @@ Staking rewards follow a **halving model** similar to Bitcoin, adjusted to a 5-s
 
 ## 🗺️ Roadmap
 
-- [x] TFHE-rs CGo FFI (key generation, encrypt, decrypt, add, sub)
-- [x] Compress-on-store strategy for KVStore efficiency
-- [x] `EncryptedTransfer` MsgServer with homomorphic balance updates
-- [x] ABCI 2.0 LWE-SHA3 block hashing (PQC sentinel)
-- [x] CLI: plaintext amount → on-the-fly encryption → TX submission
-- [ ] Persistent key management (keystore for `fhe.Context` keys)
-- [ ] Query endpoints for encrypted balance (returns ciphertext bytes)
-- [ ] ZYT Token Generation Event (TGE)
-- [ ] Cross-chain IBC privacy bridge
-- [ ] Threshold decryption for authorized auditors
-- [ ] On-chain governance module with ZYT voting
+- [x] Ring-LWR Deterministic Block Hashing (PQC sentinel)
+- [x] Proof of Verifiable Lattices (PoVL — Sequential VDF)
+- [x] ZK-SNARK Groth16 / BN254 verifier integration (gnark)
+- [x] `MsgInitCommitment` — on-chain ZK proof verification & commitment storage
+- [x] Off-chain `zkprove` and `zksetup` tools
+- [x] Fail-Fast VK startup guard
+- [x] PQC SIMD AnteDecorator
+- [x] ABCI 2.0 `PrepareProposal` / `ProcessProposal` hooks
+- [x] Deterministic `LastResultsHash` across all validator nodes
+- [ ] Multi-node testnet with full PoVL ZK proof in production
+- [ ] ZYTC Token Generation Event (TGE)
+- [ ] IBC Inter-chain Privacy Bridge
+- [ ] Dilithium3 validator signing scheme
+- [ ] On-chain governance module with ZYTC voting
+- [ ] Mainnet launch — full quantum-resistant signature scheme
 - [ ] Web dashboard integration with [zytherion.pages.dev](https://zytherion.pages.dev/)
 
 ---
@@ -307,13 +356,11 @@ Staking rewards follow a **halving model** similar to Bitcoin, adjusted to a 5-s
 ## 📦 Module Dependencies
 
 ```toml
-# Rust (tfhe-cgo/Cargo.toml)
-tfhe    = { version = "0.7", features = ["integer", "x86_64-unix"] }
-bincode = "1"
-
-# Go (x/privacy)
-github.com/cosmos/cosmos-sdk  v0.47.x
-github.com/cometbft/cometbft  v0.37.x
+# Go (go.mod)
+github.com/cosmos/cosmos-sdk         v0.47.x
+github.com/cometbft/cometbft         v0.37.x
+github.com/consensys/gnark           latest   # Groth16 / BN254 ZK proving system
+github.com/consensys/gnark-crypto    latest   # BN254 elliptic curve primitives
 ```
 
 ---

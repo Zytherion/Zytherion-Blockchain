@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cosmos/cosmos-sdk/client"
-	// "github.com/cosmos/cosmos-sdk/client/flags"
 	"zytherion/x/privacy/types"
 )
 
@@ -30,8 +29,10 @@ func GetTxCmd() *cobra.Command {
 		RunE:                       client.ValidateCmd,
 	}
 
-	cmd.AddCommand(CmdEncryptedTransfer())
-	cmd.AddCommand(CmdDeposit())
+	cmd.AddCommand(CmdZKTransfer())          // NEW: ZK-proven transfer
+	cmd.AddCommand(CmdEncryptedTransfer())   // Deprecated alias
+	cmd.AddCommand(CmdInitCommitment())      // NEW: ZK commitment deposit
+	cmd.AddCommand(CmdDeposit())             // Deprecated alias
 	// this line is used by starport scaffolding # 1
 
 	return cmd

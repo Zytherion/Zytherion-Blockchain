@@ -2,11 +2,19 @@ package types
 
 // Event type and attribute key constants for the privacy module.
 const (
-	// EventTypeEncryptedTransfer is emitted by MsgEncryptedTransfer handlers.
+	// EventTypeZKTransfer is emitted by MsgZKTransfer handlers.
+	EventTypeZKTransfer = "zk_transfer"
+
+	// EventTypeInitCommitment is emitted by MsgInitCommitment handlers when
+	// coins are escrowed and a commitment is successfully registered.
+	EventTypeInitCommitment = "init_commitment"
+
+	// EventTypeEncryptedTransfer is retained for backward-compat with indexers.
+	// Deprecated: use EventTypeZKTransfer.
 	EventTypeEncryptedTransfer = "encrypted_transfer"
 
-	// EventTypeDeposit is emitted by MsgDeposit handlers when a plaintext
-	// coin is successfully escrowed and an encrypted balance is updated.
+	// EventTypeDeposit is retained for backward-compat with indexers.
+	// Deprecated: use EventTypeInitCommitment.
 	EventTypeDeposit = "privacy_deposit"
 
 	// AttributeKeySender is the event attribute key for the transfer originator.
@@ -15,10 +23,11 @@ const (
 	// AttributeKeyRecipient is the event attribute key for the transfer recipient.
 	AttributeKeyRecipient = "recipient"
 
-	// AttributeKeyCreator is the event attribute key for the deposit originator.
+	// AttributeKeyCreator is the event attribute key for the deposit/commitment originator.
 	AttributeKeyCreator = "creator"
 
 	// AttributeKeyDepositDenom is the event attribute key for the deposited coin denomination.
 	AttributeKeyDepositDenom = "denom"
 )
+
 
