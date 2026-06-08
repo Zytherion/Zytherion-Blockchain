@@ -14,25 +14,13 @@ var (
 	// ErrInvalidAddress is returned when a bech32 address cannot be decoded.
 	ErrInvalidAddress = sdkerrors.Register(ModuleName, 1101, "invalid address")
 
-	// ErrInvalidZKProof is returned when a ZK proof cannot be deserialized
-	// or the proof field is empty in a ZKTransfer/InitCommitment message.
-	ErrInvalidZKProof = sdkerrors.Register(ModuleName, 1102, "invalid or missing ZK proof")
-
 	// ErrInvalidCommitment is returned when a commitment fails structural
 	// validation (wrong size, out of range, or zero value).
 	ErrInvalidCommitment = sdkerrors.Register(ModuleName, 1103, "invalid commitment bytes")
 
-	// ErrProofVerificationFailed is returned when the Groth16 verifier rejects
-	// the submitted proof — either the proof is malformed or the witness is wrong.
-	ErrProofVerificationFailed = sdkerrors.Register(ModuleName, 1104, "ZK proof verification failed")
-
 	// ErrNoCommitment is returned when an account has no commitment stored
-	// on-chain (analogous to the old ErrNoSenderBalance).
+	// on-chain.
 	ErrNoCommitment = sdkerrors.Register(ModuleName, 1105, "account has no commitment registered")
-
-	// ErrNullifierAlreadySpent is returned when a nullifier has already been
-	// recorded on-chain, indicating a double-spend attempt.
-	ErrNullifierAlreadySpent = sdkerrors.Register(ModuleName, 1106, "nullifier already spent — double-spend detected")
 
 	// ErrInvalidDepositAmount is returned when the deposit coin string cannot
 	// be parsed or is not a positive amount.
@@ -41,4 +29,35 @@ var (
 	// ErrInsufficientBalance is returned when the depositor's bank balance is
 	// insufficient to cover the requested deposit amount.
 	ErrInsufficientBalance = sdkerrors.Register(ModuleName, 1108, "insufficient balance for deposit")
+
+	// ── TFHE errors ──────────────────────────────────────────────────────────
+
+	// ErrTFHEDisabled is returned when a TFHE operation is requested but the
+	// node was not started with the --enable-tfhe flag.
+	ErrTFHEDisabled = sdkerrors.Register(ModuleName, 1200, "TFHE subsystem is disabled (start node with --enable-tfhe)")
+
+	// ErrInvalidCiphertext is returned when a submitted TFHE ciphertext is
+	// malformed, the wrong size, or fails commitment validation.
+	ErrInvalidCiphertext = sdkerrors.Register(ModuleName, 1201, "invalid TFHE ciphertext")
+
+	// ErrShardOperationFailed is returned when erasure coding, shard
+	// distribution, or shard reconstruction fails.
+	ErrShardOperationFailed = sdkerrors.Register(ModuleName, 1202, "TFHE shard operation failed")
+
+	// ErrShardReconstructionFailed is returned specifically when insufficient
+	// shards are available to reconstruct the original ciphertext.
+	ErrShardReconstructionFailed = sdkerrors.Register(ModuleName, 1203, "TFHE ciphertext reconstruction failed: insufficient shards")
+
+	// ErrTFHEKeyNotFound is returned when no TFHE key pair is found for the
+	// requested operation.
+	ErrTFHEKeyNotFound = sdkerrors.Register(ModuleName, 1204, "TFHE key not found")
+
+	// ErrTFHEQuotaExceeded is returned when an account tries to submit a new
+	// TFHE ciphertext while they already have an active commitment stored.
+	// Each account may hold at most one active TFHE commitment at a time.
+	ErrTFHEQuotaExceeded = sdkerrors.Register(ModuleName, 1205, "TFHE ciphertext quota exceeded: revoke existing commitment first")
+
+	// ErrShardAuthFailed is returned when a shard's Dilithium5 signature or
+	// Merkle proof fails validation.
+	ErrShardAuthFailed = sdkerrors.Register(ModuleName, 1206, "shard authentication failed: invalid signature or Merkle proof")
 )

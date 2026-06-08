@@ -19,7 +19,7 @@ const (
 	listSeparator              = ","
 )
 
-// GetTxCmd returns the transaction commands for this module
+// GetTxCmd returns the transaction commands for the privacy module (v0.3).
 func GetTxCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        types.ModuleName,
@@ -29,10 +29,11 @@ func GetTxCmd() *cobra.Command {
 		RunE:                       client.ValidateCmd,
 	}
 
-	cmd.AddCommand(CmdZKTransfer())          // NEW: ZK-proven transfer
-	cmd.AddCommand(CmdEncryptedTransfer())   // Deprecated alias
-	cmd.AddCommand(CmdInitCommitment())      // NEW: ZK commitment deposit
-	cmd.AddCommand(CmdDeposit())             // Deprecated alias
+	cmd.AddCommand(CmdTFHESubmit())       // Submit TFHE ciphertext
+	cmd.AddCommand(CmdInitCommitment())   // Register 32-byte commitment
+	cmd.AddCommand(CmdDeposit())          // Deprecated alias → init-commitment
+	cmd.AddCommand(CmdZKTransfer())       // Removed in v0.3 (returns error)
+	cmd.AddCommand(CmdEncryptedTransfer()) // Removed in v0.3 (returns error)
 	// this line is used by starport scaffolding # 1
 
 	return cmd

@@ -1,16 +1,18 @@
-// tx_encrypted_transfer.go — ZK Transfer CLI command.
+// tx_encrypted_transfer.go — TFHE Submit CLI command (v0.3).
+//
+// In v0.3, ZK-proven transfers (zk-transfer) have been REPLACED by
+// TFHE ciphertext submission (tfhe-submit). This file provides:
+//
+//   - CmdTFHESubmit: submit a TFHE ciphertext (~21 KB) to the network
+//   - CmdZKTransfer: deprecated stub that returns a clear error message
+//   - CmdEncryptedTransfer: deprecated stub (was pre-v0.2 name)
 //
 // Usage:
 //
-//	zytheriond tx privacy zk-transfer <recipient> --proof proof.json --from <key>
-//
-// The proof.json file is generated off-chain by tools/zkprove:
-//
-//	go run ./tools/zkprove --amount 1000000 --pk keys/proving_key.bin --out proof.json
+//	zytheriond tx privacy tfhe-submit --ciphertext <file.bin> --from <key>
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -19,129 +21,116 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	"github.com/spf13/cobra"
 
-	zkpkg "zytherion/x/privacy/zk"
 	"zytherion/x/privacy/types"
 )
 
 const flagProofFile = "proof"
+const flagCiphertextFile = "ciphertext"
 
-// CmdZKTransfer returns a CLI command to submit a ZK-proven private transfer.
+// CmdTFHESubmit returns a CLI command to submit a TFHE ciphertext to the network.
 //
-// Usage:
+// The ciphertext must be a serialised FheUint32 (~16-21 KB) produced by
+// the TFHE Go engine (EncryptUint32) or an external tfhe-rs client.
 //
-//	zytheriond tx privacy zk-transfer <recipient> --proof proof.json --from <key>
-func CmdZKTransfer() *cobra.Command {
+// The network will:
+//  1. Validate the ciphertext size (1 KB – 32 KB).
+//  2. Compute SHA-256 commitment hash.
+//  3. Erasure-code into 16 Reed-Solomon shards.
+//  4. Distribute shards to peer nodes (ReplicationFactor=4).
+//  5. Store shard metadata on-chain.
+func CmdTFHESubmit() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "zk-transfer [recipient] --proof <proof.json>",
-		Short: "Submit a ZK-proven private transfer",
-		Long: `Submit a private transfer using a pre-generated Groth16 ZK proof.
+		Use:   "tfhe-submit --ciphertext <file.bin>",
+		Short: "Submit a TFHE ciphertext to the network for distributed storage (v0.4)",
+		Long: `Submit a TFHE FheUint32 ciphertext to the Zytherion network.
 
-The proof.json file must be generated off-chain using the zkprove tool:
+The node must be started with --enable-tfhe for this transaction to succeed.
 
-  go run ./tools/zkprove --amount 1000000 --pk keys/proving_key.bin --out proof.json
+Steps:
 
-Then submit:
+  1. Encrypt a value using the TFHE Go engine:
+     (See x/privacy/tfhe/engine.go for the Go API)
 
-  zytheriond tx privacy zk-transfer cosmos1recipient... --proof proof.json --from alice
+  2. Save the ciphertext bytes to a file:
+     e.g., ciphertext.bin (~16-21 KB)
 
-No plaintext amount is transmitted. The chain verifies the ZK proof and
-updates on-chain commitments deterministically.`,
-		Args: cobra.ExactArgs(1),
+  3. Submit:
+     zytheriond tx privacy tfhe-submit \
+       --ciphertext ciphertext.bin \
+       --from alice \
+       --chain-id zytherion
+
+The commitment hash (SHA-256 of ciphertext) will be returned in the response.
+Use it with:
+  zytheriond query privacy tfhe-result --commitment <hex32>`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
 			if err != nil {
 				return err
 			}
 
-			recipient := args[0]
-
-			// ── 1. Load proof JSON ─────────────────────────────────────────────
-			proofPath, err := cmd.Flags().GetString(flagProofFile)
-			if err != nil || proofPath == "" {
-				return fmt.Errorf("--proof flag is required (path to proof.json from zkprove tool)")
+			// ── 1. Load ciphertext file ────────────────────────────────────────
+			ctFile, _ := cmd.Flags().GetString(flagCiphertextFile)
+			if ctFile == "" {
+				return fmt.Errorf("--ciphertext flag is required (path to FheUint32 ciphertext .bin file)")
 			}
 
-			raw, err := os.ReadFile(proofPath)
+			ciphertext, err := os.ReadFile(ctFile)
 			if err != nil {
-				return fmt.Errorf("failed to read proof file %q: %w", proofPath, err)
+				return fmt.Errorf("failed to read ciphertext file %q: %w", ctFile, err)
 			}
 
-			proofData, err := zkpkg.DecodeProofJSON(raw)
-			if err != nil {
-				return fmt.Errorf("invalid proof JSON: %w", err)
+			if len(ciphertext) < 1024 {
+				return fmt.Errorf("ciphertext too small (%d bytes); minimum 1 KB", len(ciphertext))
+			}
+			if len(ciphertext) > 32*1024 {
+				return fmt.Errorf("ciphertext too large (%d bytes); maximum 32 KB", len(ciphertext))
 			}
 
-			// ── 2. Encode public inputs ────────────────────────────────────────
-			if len(proofData.PublicInputs) < 2 {
-				return fmt.Errorf("proof JSON must contain at least 2 public inputs (CommitmentX, CommitmentY)")
-			}
-			publicInputs, err := zkpkg.EncodePublicInputs(
-				proofData.PublicInputs[0],
-				proofData.PublicInputs[1],
-			)
-			if err != nil {
-				return fmt.Errorf("failed to encode public inputs: %w", err)
-			}
-
-			// ── 3. Read sender's own new commitment from JSON ──────────────────
-			// For a transfer, the proof.json contains the sender's NEW commitment.
-			// The recipient's NEW commitment is derived by the prover tool.
-			// In this simplified CLI, we use the same commitment for both
-			// (single-commitment model). A full UTXO model would have two.
-			senderNewCommitment := proofData.Commitment
-			recipientNewCommitment := proofData.Commitment // simplified: prover sets this
-
-			// ── 4. Read nullifier from proof JSON (extended field) ─────────────
-			var nullifier []byte
-			var extended struct {
-				Nullifier []byte `json:"nullifier"`
-			}
-			if err := json.Unmarshal(raw, &extended); err == nil && len(extended.Nullifier) == 32 {
-				nullifier = extended.Nullifier
-			} else {
-				// Derive nullifier from commitment (simplified)
-				nullifier, err = zkpkg.NullifierForTransfer(senderNewCommitment, proofData.Commitment)
-				if err != nil {
-					return fmt.Errorf("failed to derive nullifier: %w", err)
-				}
-			}
-
-			// ── 5. Build and broadcast message ────────────────────────────────
+			// ── 3. Build and broadcast message ────────────────────────────────
 			sender := clientCtx.GetFromAddress().String()
-
-			msg := types.NewMsgZKTransfer(
-				sender,
-				recipient,
-				senderNewCommitment,
-				recipientNewCommitment,
-				nullifier,
-				proofData.Proof,
-				publicInputs,
-			)
+			msg := types.NewMsgTFHESubmit(sender, ciphertext)
 			if err := msg.ValidateBasic(); err != nil {
 				return err
 			}
 
-			fmt.Printf("Broadcasting ZK transfer to %s (proof: %s)...\n", recipient, proofPath)
+			fmt.Printf("Submitting TFHE ciphertext: size=%d bytes...\n", len(ciphertext))
 			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
 		},
 	}
 
-	cmd.Flags().String(flagProofFile, "", "Path to proof.json generated by tools/zkprove (required)")
-	_ = cmd.MarkFlagRequired(flagProofFile)
+	cmd.Flags().String(flagCiphertextFile, "", "Path to TFHE FheUint32 ciphertext binary file (~16-21 KB)")
+	_ = cmd.MarkFlagRequired(flagCiphertextFile)
 	flags.AddTxFlagsToCmd(cmd)
 
 	return cmd
 }
 
-// CmdEncryptedTransfer is a deprecated alias that always returns an error.
-// Kept for backward-compat with scripts that reference the old command name.
+// CmdZKTransfer is a deprecated stub. ZK transfers were removed in v0.3.
+// The new privacy mechanism is TFHE via tx privacy tfhe-submit.
+func CmdZKTransfer() *cobra.Command {
+	return &cobra.Command{
+		Use:        "zk-transfer",
+		Deprecated: "ZK transfers removed in v0.3. Use 'tfhe-submit --ciphertext <file>' instead.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf(
+				"zk-transfer was removed in Zytherion v0.3 (ZK-SNARK subsystem deleted).\n" +
+					"Use TFHE instead:\n" +
+					"  zytheriond tx privacy tfhe-submit --ciphertext <ciphertext.bin> --from <key>")
+		},
+	}
+}
+
+// CmdEncryptedTransfer is a deprecated stub (pre-v0.2 name).
 func CmdEncryptedTransfer() *cobra.Command {
 	return &cobra.Command{
 		Use:        "encrypted-transfer",
-		Deprecated: "Use 'zk-transfer --proof proof.json' instead. Generate proof with: go run ./tools/zkprove",
+		Deprecated: "Removed in v0.3. Use 'tfhe-submit --ciphertext <file>' instead.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("encrypted-transfer is deprecated. Use: zytheriond tx privacy zk-transfer <recipient> --proof proof.json --from <key>")
+			return fmt.Errorf(
+				"encrypted-transfer was removed in Zytherion v0.3.\n" +
+					"Use: zytheriond tx privacy tfhe-submit --ciphertext <file.bin> --from <key>")
 		},
 	}
 }

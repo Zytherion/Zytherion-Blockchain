@@ -1,54 +1,58 @@
-// tx_deposit.go — InitCommitment CLI command (replaces old Deposit).
+// tx_deposit.go — InitCommitment CLI command (v0.3: ZK proof removed).
 //
 // Usage:
 //
-//	zytheriond tx privacy init-commitment <amount> --proof proof.json --from <key>
+//	zytheriond tx privacy init-commitment <amount> --commitment <hex32> --from <key>
 //
-// Generate proof.json with:
-//
-//	go run ./tools/zkprove --amount 1000000 --pk keys/proving_key.bin --out proof.json
+// The commitment is a 32-byte SHA-256 hash of the user's secret value.
+// No ZK proof is required in v0.3 — the commitment is stored as-is.
 package cli
 
 import (
+	"encoding/hex"
 	"fmt"
-	"os"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	"github.com/spf13/cobra"
 
-	zkpkg "zytherion/x/privacy/zk"
 	"zytherion/x/privacy/types"
 )
 
+const flagCommitmentHex = "commitment"
+
 // CmdInitCommitment returns a CLI command to initialize a privacy commitment.
 //
-// Deposits plaintext coins into the module escrow and registers a ZK-proven
-// commitment on-chain. After this, the user's balance is tracked via commitments.
+// Deposits plaintext coins into the module escrow and registers a 32-byte
+// commitment on-chain. In v0.3, no ZK proof is required — the commitment is
+// a SHA-256 hash of any secret value known only to the user.
 func CmdInitCommitment() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "init-commitment [amount] --proof <proof.json>",
-		Short: "Deposit tokens and register a ZK commitment in the privacy module",
-		Long: `Deposit tokens into the privacy module and register a ZK-proven commitment.
+		Use:   "init-commitment [amount] --commitment <hex32>",
+		Short: "Deposit tokens and register a privacy commitment (v0.3: no ZK proof required)",
+		Long: `Deposit tokens into the privacy module and register a commitment.
 
-Step 1: Generate a proof for your deposit amount off-chain:
+v0.3 change: ZK-SNARK proof is NO LONGER required. The commitment is a
+32-byte SHA-256 hash of a secret value you choose.
 
-  go run ./tools/zkprove \
-    --amount 1000000 \
-    --pk keys/proving_key.bin \
-    --out proof.json
+Step 1: Generate your commitment off-chain:
+  # Using bash:
+  echo -n "my-secret-blinding-factor" | sha256sum
+
+  # Using Go:
+  go run -e 'package main; import ("crypto/sha256"; "fmt"); func main() { h := sha256.Sum256([]byte("secret")); fmt.Printf("%x\n", h[:]) }'
 
 Step 2: Submit the commitment on-chain:
-
   zytheriond tx privacy init-commitment 1000000uzyt \
-    --proof proof.json \
+    --commitment <64-hex-chars> \
     --from alice \
     --chain-id zytherion
 
-The chain will verify the ZK proof before escrowing your tokens and storing
-the 32-byte commitment. Your blinding factor (in proof.json) must be kept
-secret — it is your "key" to spend the commitment later.`,
+Keep your secret value — it is your key to prove ownership of the commitment.
+
+For TFHE (FHE) privacy operations, use:
+  zytheriond tx privacy tfhe-submit --ciphertext <file> --from alice`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
@@ -58,55 +62,35 @@ secret — it is your "key" to spend the commitment later.`,
 
 			amount := args[0]
 
-			// ── 1. Load proof JSON ─────────────────────────────────────────────
-			proofPath, _ := cmd.Flags().GetString(flagProofFile)
-			if proofPath == "" {
-				return fmt.Errorf("--proof flag is required (path to proof.json from zkprove tool)")
+			// ── 1. Parse commitment hex ────────────────────────────────────────
+			commitmentHex, _ := cmd.Flags().GetString(flagCommitmentHex)
+			if commitmentHex == "" {
+				return fmt.Errorf("--commitment flag is required (64 hex chars = 32 bytes SHA-256 hash)")
 			}
-
-			raw, err := os.ReadFile(proofPath)
+			commitment, err := hex.DecodeString(commitmentHex)
 			if err != nil {
-				return fmt.Errorf("failed to read proof file %q: %w", proofPath, err)
+				return fmt.Errorf("invalid --commitment hex: %w", err)
+			}
+			if len(commitment) != 32 {
+				return fmt.Errorf("--commitment must decode to exactly 32 bytes, got %d", len(commitment))
 			}
 
-			proofData, err := zkpkg.DecodeProofJSON(raw)
-			if err != nil {
-				return fmt.Errorf("invalid proof JSON: %w", err)
-			}
-
-			// ── 2. Encode public inputs ────────────────────────────────────────
-			if len(proofData.PublicInputs) < 2 {
-				return fmt.Errorf("proof JSON must contain at least 2 public inputs")
-			}
-			publicInputs, err := zkpkg.EncodePublicInputs(
-				proofData.PublicInputs[0],
-				proofData.PublicInputs[1],
-			)
-			if err != nil {
-				return fmt.Errorf("failed to encode public inputs: %w", err)
-			}
-
-			// ── 3. Build and broadcast message ────────────────────────────────
+			// ── 2. Build and broadcast message ─────────────────────────────────
 			creator := clientCtx.GetFromAddress().String()
 
-			msg := types.NewMsgInitCommitment(
-				creator,
-				amount,
-				proofData.Commitment,
-				proofData.Proof,
-				publicInputs,
-			)
+			msg := types.NewMsgInitCommitment(creator, amount, commitment)
 			if err := msg.ValidateBasic(); err != nil {
 				return err
 			}
 
-			fmt.Printf("Submitting InitCommitment: amount=%s, proof=%s\n", amount, proofPath)
+			fmt.Printf("Submitting InitCommitment: amount=%s, commitment=%s...\n",
+				amount, commitmentHex[:8]+"...")
 			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
 		},
 	}
 
-	cmd.Flags().String(flagProofFile, "", "Path to proof.json generated by tools/zkprove (required)")
-	_ = cmd.MarkFlagRequired(flagProofFile)
+	cmd.Flags().String(flagCommitmentHex, "", "32-byte commitment as 64 hex chars (SHA-256 of your secret)")
+	_ = cmd.MarkFlagRequired(flagCommitmentHex)
 	flags.AddTxFlagsToCmd(cmd)
 
 	return cmd
@@ -116,9 +100,9 @@ secret — it is your "key" to spend the commitment later.`,
 func CmdDeposit() *cobra.Command {
 	return &cobra.Command{
 		Use:        "deposit",
-		Deprecated: "Use 'init-commitment <amount> --proof proof.json' instead.",
+		Deprecated: "Use 'init-commitment <amount> --commitment <hex>' instead.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("deposit is deprecated. Use: zytheriond tx privacy init-commitment <amount> --proof proof.json --from <key>")
+			return fmt.Errorf("deposit is deprecated. Use: zytheriond tx privacy init-commitment <amount> --commitment <hex32> --from <key>")
 		},
 	}
 }

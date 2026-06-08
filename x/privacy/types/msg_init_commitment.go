@@ -1,16 +1,13 @@
 // msg_init_commitment.go — SDK message type for initializing a privacy commitment.
 //
-// Replaces the FHE-dependent parts of MsgDeposit.
-// The user escrows plaintext coins into the module account and registers
-// a ZK-verified commitment on-chain. No plaintext is ever stored.
-//
-// Flow:
-//  1. Bank sends coins: user → privacy module escrow
-//  2. Chain verifies ZK proof of commitment validity
-//  3. Commitment is stored on-chain (32 bytes)
+// v0.3: ZK proof fields (ZkProof, PublicInputs) removed.
+// The commitment is now a plain 32-byte SHA-256 hash of a user secret.
+// No trusted setup or ZK circuit is required.
 package types
 
 import (
+	"encoding/json"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 )
@@ -20,16 +17,13 @@ var _ sdk.Msg = &MsgInitCommitment{}
 
 const TypeMsgInitCommitment = "init_commitment"
 
-
-
 // NewMsgInitCommitment constructs a MsgInitCommitment.
-func NewMsgInitCommitment(creator, amount string, commitment, zkProof, publicInputs []byte) *MsgInitCommitment {
+// commitment must be 32 bytes (SHA-256 of the user's private input).
+func NewMsgInitCommitment(creator, amount string, commitment []byte) *MsgInitCommitment {
 	return &MsgInitCommitment{
-		Creator:      creator,
-		Amount:       amount,
-		Commitment:   commitment,
-		ZkProof:      zkProof,
-		PublicInputs: publicInputs,
+		Creator:    creator,
+		Amount:     amount,
+		Commitment: commitment,
 	}
 }
 
@@ -49,8 +43,12 @@ func (msg *MsgInitCommitment) GetSigners() []sdk.AccAddress {
 }
 
 // GetSignBytes implements sdk.Msg.
+// Uses standard JSON encoding since MsgInitCommitment is not a proto-registered type.
 func (msg *MsgInitCommitment) GetSignBytes() []byte {
-	bz := ModuleCdc.MustMarshalJSON(msg)
+	bz, err := json.Marshal(msg)
+	if err != nil {
+		panic(err)
+	}
 	return sdk.MustSortJSON(bz)
 }
 
@@ -68,12 +66,6 @@ func (msg *MsgInitCommitment) ValidateBasic() error {
 	}
 	if len(msg.Commitment) != 32 {
 		return sdkerrors.Wrapf(ErrInvalidCommitment, "commitment must be 32 bytes, got %d", len(msg.Commitment))
-	}
-	if len(msg.ZkProof) == 0 {
-		return ErrInvalidZKProof
-	}
-	if len(msg.PublicInputs) != 64 {
-		return sdkerrors.Wrapf(ErrInvalidZKProof, "public inputs must be 64 bytes, got %d", len(msg.PublicInputs))
 	}
 	return nil
 }

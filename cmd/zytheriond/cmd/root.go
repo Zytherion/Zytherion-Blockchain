@@ -36,6 +36,7 @@ import (
 	"github.com/spf13/cast"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
 	// this line is used by starport scaffolding # root/moduleImport
 
 	"zytherion/app"
@@ -57,7 +58,22 @@ func NewRootCmd() (*cobra.Command, appparams.EncodingConfig) {
 
 	rootCmd := &cobra.Command{
 		Use:   app.Name + "d",
-		Short: "Zytherion: The First PQC + FHE Privacy Blockchain",
+		Short: "Zytherion Blockchain and Cryptocurrency v0.3",
+		Long: `Zytherion Blockchain and Cryptocurrency v0.3
+
+Founder: Rayhan Aziel Abbrar
+Website: https://github.com/Zytherion
+
+Features:
+  - Post-Quantum Signatures: Dilithium5 (ML-DSA Level 5, ~256-bit PQ security)
+  - Post-Quantum Hashing:    LWR (Ring-LWR / SHAKE-256)
+  - Consensus:               GreenBFT + PoVL sequential VDF
+  - Privacy:                 TFHE Homomorphic Encryption (FheUint32, tfhe-rs)
+  - Storage:                 Reed-Solomon Erasure Coding (10+6=16 shards)
+  - ZK-SNARK:                REMOVED in v0.3
+
+Start with TFHE enabled:
+  zytheriond start --enable-tfhe`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
@@ -138,6 +154,38 @@ func initRootCmd(
 		addModuleInitFlags,
 	)
 
+	// Customize the version command to print Zytherion's specific info
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() == "version" {
+			originalRunE := cmd.RunE
+			cmd.RunE = func(subCmd *cobra.Command, args []string) error {
+				long, _ := subCmd.Flags().GetBool("long")
+				output, _ := subCmd.Flags().GetString("output")
+				if output == "json" {
+					if originalRunE != nil {
+						return originalRunE(subCmd, args)
+					}
+				}
+
+				subCmd.Println("Zytherion Blockchain and Cryptocurrency")
+				subCmd.Println("Version: v0.3.0")
+				subCmd.Println("Founder: Rayhan Aziel Abbrar")
+				subCmd.Println("Signature: CRYSTALS-Dilithium V (ML-DSA Level 5)")
+				subCmd.Println("Hashing:   LWR (Ring-LWR / SHAKE-256)")
+				subCmd.Println("Consensus: GreenBFT + PoVL VDF")
+				subCmd.Println("TFHE:      tfhe-rs (Zama) via CGo (Default: OFF)")
+				subCmd.Println("ZK-SNARK:  REMOVED (v0.3)")
+
+				if long && originalRunE != nil {
+					subCmd.Println()
+					subCmd.Println("--- Cosmos SDK Build Info ---")
+					return originalRunE(subCmd, args)
+				}
+				return nil
+			}
+		}
+	}
+
 	// add keybase, auxiliary RPC, query, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
@@ -201,6 +249,15 @@ func txCommand() *cobra.Command {
 
 func addModuleInitFlags(startCmd *cobra.Command) {
 	crisis.AddModuleInitFlags(startCmd)
+
+	// -- enable-tfhe: Activate TFHE homomorphic encryption subsystem.
+	// When set, the node initialises the shard store, shard distributor,
+	// and accepts tx/tfhe_submit transactions.
+	startCmd.Flags().Bool("enable-tfhe", false,
+		"Enable TFHE (Fully Homomorphic Encryption) subsystem. "+
+			"Activates erasure-coded ciphertext storage and homomorphic operations. "+
+			"Default: false. Requires Rust tfhe_c library compiled via 'make build-tfhe-rs'.")
+
 	// this line is used by starport scaffolding # root/arguments
 }
 

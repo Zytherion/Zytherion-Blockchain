@@ -1,9 +1,15 @@
 // crypto_startup.go — Startup diagnostics for Zytherion's cryptographic subsystems.
 //
-// Runs self-tests for the ZK (Groth16/gnark) and LWE (Ring-LWE) subsystems
-// when the node boots, printing a clear status banner to the node logger.
+// Runs self-tests for the Dilithium5 (ML-DSA Level 5) signature and LWR hashing
+// subsystems when the node boots, printing a clear status banner to the node logger.
 //
-// Integration: called from app.New() after zkVK is loaded.
+// # v0.3 Changes
+//
+// ZK (Groth16/BN254) subsystem has been REMOVED in v0.3.
+// The startup check now verifies:
+//   - Dilithium5 sign/verify round-trip (replaces ZK verifier check)
+//   - LWR (Ring-LWR / SHAKE-256) block hashing with avalanche property
+//   - TFHE subsystem status (enabled/disabled report)
 package app
 
 import (
@@ -14,7 +20,6 @@ import (
 	"github.com/cometbft/cometbft/libs/log"
 
 	"zytherion/x/privacy/pqc"
-	"zytherion/x/privacy/zk"
 )
 
 // cryptoStatus holds the result of each subsystem check.
@@ -25,99 +30,80 @@ type cryptoStatus struct {
 	elapsed time.Duration
 }
 
-// RunCryptoStartupChecks verifies that both the ZK verifier and LWE subsystems
+// RunCryptoStartupChecks verifies that the Dilithium5 signer and LWR subsystems
 // are fully operational. It logs a startup status banner showing:
 //
-//   - ZK (Groth16/gnark): VK deserialization + proof structure check
-//   - LWE (Ring-LWE hash): hash generation + avalanche sanity check
+//   - Dilithium5 (ML-DSA Level 5): keygen + sign/verify self-test
+//   - LWR (Ring-LWR hash): hash generation + avalanche sanity check
+//   - TFHE: enabled/disabled status (no functional check at startup — too slow)
 //
 // This function is a read-only self-test — it does NOT mutate any state.
-func RunCryptoStartupChecks(logger log.Logger, zkVK []byte) {
+func RunCryptoStartupChecks(logger log.Logger, tfheEnabled bool) {
 	results := []cryptoStatus{
-		checkZKVerifier(zkVK),
+		checkDilithium5(),
 		checkLWR(),
+		checkTFHEStatus(tfheEnabled),
 	}
 
 	printStartupBanner(logger, results)
 }
 
-// ── ZK Verifier check ─────────────────────────────────────────────────────────
+// ── Dilithium5 self-test ──────────────────────────────────────────────────────
 
-// checkZKVerifier verifies that the Groth16 verifying key is loadable and
-// that the commitment helpers work correctly (deterministic self-test).
-func checkZKVerifier(zkVK []byte) cryptoStatus {
+// checkDilithium5 performs a complete sign/verify round-trip with Dilithium5.
+// This verifies the circl library is functioning correctly at startup.
+func checkDilithium5() cryptoStatus {
 	start := time.Now()
 
-	if len(zkVK) == 0 {
-		return cryptoStatus{
-			name:    "ZK (Groth16/BN254)",
-			ok:      false,
-			detail:  "verifying key is empty — run 'make zksetup' to generate keys/verifying_key.bin",
-			elapsed: time.Since(start),
-		}
-	}
-
-	// Test commitment determinism: same inputs → same commitment.
-	const testAmount uint64 = 123_456_789
-	testBlinding := []byte("zytherion-zk-startup-probe-v1-xx") // 32 bytes
-
-	c1, err := zk.Commit(testAmount, testBlinding)
+	kp, err := pqc.GenerateKeyPair()
 	if err != nil {
 		return cryptoStatus{
-			name:    "ZK (Groth16/BN254)",
+			name:    "Dilithium5 (ML-DSA Level 5)",
 			ok:      false,
-			detail:  fmt.Sprintf("Commit() failed: %v", err),
+			detail:  fmt.Sprintf("GenerateKeyPair failed: %v", err),
 			elapsed: time.Since(start),
 		}
 	}
 
-	c2, err := zk.Commit(testAmount, testBlinding)
+	testMsg := []byte("zytherion-dilithium5-startup-probe-v03")
+	sig, err := pqc.Sign(testMsg, kp.PrivateKey)
 	if err != nil {
 		return cryptoStatus{
-			name:    "ZK (Groth16/BN254)",
+			name:    "Dilithium5 (ML-DSA Level 5)",
 			ok:      false,
-			detail:  fmt.Sprintf("Commit() second call failed: %v", err),
+			detail:  fmt.Sprintf("Sign failed: %v", err),
 			elapsed: time.Since(start),
 		}
 	}
 
-	// Commitments must be identical (deterministic).
-	if len(c1) != 32 || len(c2) != 32 {
+	if !pqc.Verify(testMsg, sig, kp.PublicKey) {
 		return cryptoStatus{
-			name:    "ZK (Groth16/BN254)",
+			name:    "Dilithium5 (ML-DSA Level 5)",
 			ok:      false,
-			detail:  fmt.Sprintf("commitment size mismatch: got %d and %d bytes (want 32)", len(c1), len(c2)),
+			detail:  "Verify returned false for a freshly signed message — CRITICAL BUG",
 			elapsed: time.Since(start),
 		}
 	}
-	for i := range c1 {
-		if c1[i] != c2[i] {
-			return cryptoStatus{
-				name:    "ZK (Groth16/BN254)",
-				ok:      false,
-				detail:  "commitment is non-deterministic — CRITICAL BUG",
-				elapsed: time.Since(start),
-			}
-		}
-	}
 
-	// Validate commitment bytes.
-	if err := zk.ValidateCommitmentBytes(c1); err != nil {
+	// Verify tampered message fails.
+	tampered := make([]byte, len(testMsg))
+	copy(tampered, testMsg)
+	tampered[0] ^= 0xFF
+	if pqc.Verify(tampered, sig, kp.PublicKey) {
 		return cryptoStatus{
-			name:    "ZK (Groth16/BN254)",
+			name:    "Dilithium5 (ML-DSA Level 5)",
 			ok:      false,
-			detail:  fmt.Sprintf("ValidateCommitmentBytes failed: %v", err),
+			detail:  "Verify accepted a tampered message — CRITICAL SECURITY BUG",
 			elapsed: time.Since(start),
 		}
 	}
 
-	// VK size sanity check (we don't run a full proof here — too slow at startup).
 	return cryptoStatus{
-		name: "ZK (Groth16/BN254)",
+		name: "Dilithium5 (ML-DSA Level 5)",
 		ok:   true,
 		detail: fmt.Sprintf(
-			"VK=%dB  commitment(amount=%d)=%s…  deterministic=✓",
-			len(zkVK), testAmount, hex.EncodeToString(c1[:4]),
+			"pubkey=%dB privkey=%dB sig=%dB  sign=✓ verify=✓ tamper-reject=✓",
+			pqc.DilithiumPublicKeySize, pqc.DilithiumPrivateKeySize, pqc.DilithiumSignatureSize,
 		),
 		elapsed: time.Since(start),
 	}
@@ -195,6 +181,28 @@ func checkLWR() cryptoStatus {
 	}
 }
 
+// ── TFHE status check ─────────────────────────────────────────────────────────
+
+// checkTFHEStatus reports the TFHE subsystem enabled/disabled status.
+// We do NOT perform a functional TFHE test at startup because key generation
+// takes 30-120 seconds — unacceptable for a blockchain node startup.
+func checkTFHEStatus(enabled bool) cryptoStatus {
+	if enabled {
+		return cryptoStatus{
+			name:    "TFHE (tfhe-rs / FheUint32)",
+			ok:      true,
+			detail:  "subsystem ENABLED — erasure coding: 10+6=16 shards, replication=3×",
+			elapsed: 0,
+		}
+	}
+	return cryptoStatus{
+		name:    "TFHE (tfhe-rs / FheUint32)",
+		ok:      true, // not a failure — it's intentionally disabled
+		detail:  "subsystem DISABLED (start with --enable-tfhe to activate)",
+		elapsed: 0,
+	}
+}
+
 // ── Banner printer ────────────────────────────────────────────────────────────
 
 func printStartupBanner(logger log.Logger, results []cryptoStatus) {
@@ -209,7 +217,9 @@ func printStartupBanner(logger log.Logger, results []cryptoStatus) {
 	sep := "═══════════════════════════════════════════════════════════"
 
 	logger.Info(sep)
-	logger.Info("  ⚛  ZYTHERION CRYPTOGRAPHIC SUBSYSTEM STARTUP REPORT  ⚛")
+	logger.Info("  ⚛  ZYTHERION BLOCKCHAIN AND CRYPTOCURRENCY v0.3  ⚛")
+	logger.Info("  ⚛  Founder: Rayhan Aziel Abbrar                    ⚛")
+	logger.Info("  ⚛  CRYPTOGRAPHIC SUBSYSTEM STARTUP REPORT          ⚛")
 	logger.Info(sep)
 
 	for _, r := range results {
@@ -217,18 +227,24 @@ func printStartupBanner(logger log.Logger, results []cryptoStatus) {
 		if !r.ok {
 			status = "❌ FAIL"
 		}
+		elapsed := ""
+		if r.elapsed > 0 {
+			elapsed = r.elapsed.Round(time.Millisecond).String()
+		}
 		logger.Info(fmt.Sprintf("  [%s] %s", status, r.name),
 			"detail", r.detail,
-			"elapsed", r.elapsed.Round(time.Millisecond).String(),
+			"elapsed", elapsed,
 		)
 	}
 
 	logger.Info(sep)
 	if allOK {
 		logger.Info("  ✅ ALL CRYPTO SUBSYSTEMS OPERATIONAL — node is READY")
-		logger.Info("     ZK proof verification: ACTIVE  (algo=Groth16/BN254)")
-		logger.Info("     LWR block hashing:      ACTIVE  (algo=" + pqc.HashAlgorithm + ")")
-		logger.Info("     PoVL sequential VDF:   ACTIVE  (delay_steps=10)")
+		logger.Info("     Signature algorithm: Dilithium5 (ML-DSA-87, NIST Cat-5, ~256-bit PQ)")
+		logger.Info("     Block hashing:        LWR (Ring-LWR / SHAKE-256) ACTIVE")
+		logger.Info("     PoVL sequential VDF:  ACTIVE (delay_steps=10)")
+		logger.Info("     ZK-SNARK (Groth16):   REMOVED in v0.3")
+		logger.Info("     TFHE homomorphic:     see TFHE status above")
 	} else {
 		logger.Error("  ❌ ONE OR MORE CRYPTO SUBSYSTEMS FAILED — CHECK LOGS ABOVE")
 		logger.Error("     The node will continue but affected features may not work.")

@@ -12,15 +12,17 @@ import (
 // ─── KeyPair Generation ───────────────────────────────────────────────────────
 
 // TestDilithiumKeyPairGeneration verifies that GenerateKeyPair succeeds and
-// returns non-empty keys of the expected lengths for Dilithium3.
+// returns non-empty keys of the expected lengths for Dilithium5 (ML-DSA Level 5).
 func TestDilithiumKeyPairGeneration(t *testing.T) {
 	kp, err := pqc.GenerateKeyPair()
 	require.NoError(t, err, "GenerateKeyPair must not return an error")
 
-	// Dilithium3 public key = mode3.PublicKeySize bytes.
+	// Dilithium5 public key = mode5.PublicKeySize = 2592 bytes.
 	require.Equal(t, pqc.DilithiumPublicKeySize, len(kp.PublicKey),
-		"Dilithium3 public key must be %d bytes", pqc.DilithiumPublicKeySize)
-	// Dilithium3 private key = mode3.PrivateKeySize bytes.
+		"Dilithium5 public key must be %d bytes", pqc.DilithiumPublicKeySize)
+	// Dilithium5 private key = mode5.PrivateKeySize = 4864 bytes.
+	require.Equal(t, pqc.DilithiumPrivateKeySize, len(kp.PrivateKey),
+		"Dilithium5 private key must be %d bytes", pqc.DilithiumPrivateKeySize)
 	require.NotEmpty(t, kp.PrivateKey, "private key must not be empty")
 }
 
@@ -38,15 +40,16 @@ func TestDilithiumSignVerify(t *testing.T) {
 	require.NoError(t, err, "Sign must not return an error")
 	require.NotEmpty(t, sig, "signature must not be empty")
 
-	// Dilithium3 signature = mode3.SignatureSize bytes.
-	require.Equal(t, pqc.DilithiumSignatureSize, len(sig), "Dilithium3 signature must be %d bytes", pqc.DilithiumSignatureSize)
+	// Dilithium5 signature = mode5.SignatureSize = 4595 bytes.
+	require.Equal(t, pqc.DilithiumSignatureSize, len(sig),
+		"Dilithium5 signature must be %d bytes", pqc.DilithiumSignatureSize)
 
 	ok := pqc.Verify(message, sig, kp.PublicKey)
-	require.True(t, ok, "Verify must return true for a valid signature")
+	require.True(t, ok, "Verify must return true for a valid Dilithium5 signature")
 }
 
 // TestDilithiumDeterminism verifies that signing the same message twice with
-// the same key produces the same signature (deterministic signing per spec).
+// the same key produces the same signature (deterministic signing per ML-DSA spec).
 func TestDilithiumDeterminism(t *testing.T) {
 	kp, err := pqc.GenerateKeyPair()
 	require.NoError(t, err)
@@ -60,7 +63,7 @@ func TestDilithiumDeterminism(t *testing.T) {
 	require.NoError(t, err)
 
 	require.True(t, bytes.Equal(sig1, sig2),
-		"Dilithium3 signing must be deterministic: same (key, message) must produce identical signatures")
+		"Dilithium5 signing must be deterministic: same (key, message) must produce identical signatures")
 }
 
 // TestDilithiumWrongKeyVerify verifies that a signature produced by key A
@@ -83,7 +86,7 @@ func TestDilithiumWrongKeyVerify(t *testing.T) {
 }
 
 // TestDilithiumTamperedMessage verifies that modifying the message after
-// signing causes verification to fail.
+// signing causes Dilithium5 verification to fail.
 func TestDilithiumTamperedMessage(t *testing.T) {
 	kp, err := pqc.GenerateKeyPair()
 	require.NoError(t, err)
@@ -98,13 +101,13 @@ func TestDilithiumTamperedMessage(t *testing.T) {
 
 	ok := pqc.Verify(tampered, sig, kp.PublicKey)
 	require.False(t, ok,
-		"tampered message must fail Dilithium3 verification")
+		"tampered message must fail Dilithium5 verification")
 }
 
 // TestDilithiumInvalidKeyBytes verifies that Sign and Verify handle
 // malformed key bytes gracefully rather than panicking.
 func TestDilithiumInvalidKeyBytes(t *testing.T) {
-	garbage := []byte("not a valid dilithium3 key")
+	garbage := []byte("not a valid dilithium5 key")
 
 	_, err := pqc.Sign([]byte("msg"), garbage)
 	require.Error(t, err, "Sign with invalid private key must return an error")
@@ -113,9 +116,16 @@ func TestDilithiumInvalidKeyBytes(t *testing.T) {
 	require.False(t, ok, "Verify with invalid public key must return false")
 }
 
+// TestDilithiumKeySizes confirms exported constants match expected ML-DSA Level 5 sizes.
+func TestDilithiumKeySizes(t *testing.T) {
+	require.Equal(t, 2592, pqc.DilithiumPublicKeySize, "ML-DSA-87 public key must be 2592 bytes")
+	require.Equal(t, 4864, pqc.DilithiumPrivateKeySize, "ML-DSA-87 private key must be 4864 bytes")
+	require.Equal(t, 4595, pqc.DilithiumSignatureSize, "ML-DSA-87 signature must be 4595 bytes")
+}
+
 // ─── Benchmark ────────────────────────────────────────────────────────────────
 
-// BenchmarkDilithiumSign measures Dilithium3 signing throughput.
+// BenchmarkDilithiumSign measures Dilithium5 signing throughput.
 func BenchmarkDilithiumSign(b *testing.B) {
 	kp, _ := pqc.GenerateKeyPair()
 	msg := make([]byte, 32)
@@ -126,7 +136,7 @@ func BenchmarkDilithiumSign(b *testing.B) {
 	}
 }
 
-// BenchmarkDilithiumVerify measures Dilithium3 verification throughput.
+// BenchmarkDilithiumVerify measures Dilithium5 verification throughput.
 func BenchmarkDilithiumVerify(b *testing.B) {
 	kp, _ := pqc.GenerateKeyPair()
 	msg := make([]byte, 32)

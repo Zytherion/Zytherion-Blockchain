@@ -37,17 +37,20 @@ func PrivacyKeeper(t testing.TB) (*keeper.Keeper, sdk.Context) {
 		"PrivacyParams",
 	)
 
-	// In tests, we use nil zkVK — the keeper will reject all proofs.
-	// For ZK-specific tests, inject a real VK loaded from keys/verifying_key.bin.
-	var zkVK []byte = nil
+	// v0.3: TFHE is disabled by default in tests (no Rust library required).
+	// The homeDir is unused when tfheEnabled=false.
+	const tfheEnabled = false
+	const homeDir = ""
 
 	k := keeper.NewKeeper(
 		cdc,
 		storeKey,
 		memStoreKey,
 		paramsSubspace,
-		nil,
-		zkVK,
+		nil,       // bankKeeper — nil is fine for unit tests that don't do transfers
+		tfheEnabled,
+		homeDir,
+		"",        // nodeID — unused when tfheEnabled=false
 	)
 
 	ctx := sdk.NewContext(stateStore, tmproto.Header{}, false, log.NewNopLogger())

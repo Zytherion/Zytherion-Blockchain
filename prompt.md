@@ -1,385 +1,387 @@
-# Zytherion — Panduan Lengkap CLI & API
+# Zytherion v0.4 — Architecture Prompt
 
-> **Chain ID:** `zytherion` | **Token:** `zytc` | **Binary:** `zytheriond`
-
----
-
-## Daftar Isi
-1. [Setup & Instalasi](#1-setup--instalasi)
-2. [Menjalankan Node](#2-menjalankan-node)
-3. [Konfigurasi CLI](#3-konfigurasi-cli)
-4. [Manajemen Akun](#4-manajemen-akun)
-5. [Transaksi Token](#5-transaksi-token)
-6. [Query Data Blockchain](#6-query-data-blockchain)
-7. [Staking & Delegasi](#7-staking--delegasi)
-8. [Distribusi & Reward](#8-distribusi--reward)
-9. [Validator Lifecycle](#9-validator-lifecycle)
-10. [Governance](#10-governance)
-11. [Privacy Module (ZK)](#11-privacy-module-zk)
-12. [Faucet Development](#12-faucet-development)
-13. [ZK Tooling Off-chain](#13-zk-tooling-off-chain)
-14. [API & Endpoints](#14-api--endpoints)
-15. [Monitoring & Debug](#15-monitoring--debug)
+**Project:** Zytherion Blockchain and Cryptocurrency  
+**Version:** 0.4.0  
+**Founder:** Rayhan Aziel Abbrar  
+**Repository:** https://github.com/Zytherion/Zytherion-Blockchain
 
 ---
 
-## 1. Setup & Instalasi
+## System Description
+
+Zytherion is a Layer-1 blockchain built on **Cosmos SDK v0.47 + CometBFT v0.37** featuring post-quantum cryptographic primitives and a fully homomorphic encryption privacy module.
+
+**Tech Stack:**
+- Languages: **Go** (main codebase) + **Rust** (TFHE library via CGo binding)
+- Framework: Cosmos SDK (IBC, Gov, Staking, Bank, Privacy module)
+- Consensus: CometBFT BFT + GreenBFT extensions
+- Hashing: Ring-LWR (post-quantum, pure integer arithmetic)
+- Signatures: **Dilithium5 (ML-DSA Level 5)** — NIST Cat-5, ~256-bit PQ security
+- Privacy: **TFHE via tfhe-rs** (Zama) — FheUint32 operations
+- Storage: **Reed-Solomon erasure coding** (12+4=16 shards, v0.4)
+- Integrity: **Binary Merkle Tree** (SHA-256) over shard set — root stored on-chain (v0.4)
+
+---
+
+## Cryptographic Architecture (v0.4)
+
+### Layer 1: Block Hashing — Ring-LWR
+
+**Files:** `x/privacy/pqc/lwr_hash.go`, `hashing.go`  
+**Algorithm:** Learning With Rounding in the Ring $Rq = \mathbb{Z}_q[X]/(X^n+1)$  
+**Parameters:** $n=256$, $q=3329$, $p=256$, output size $= 96$ bytes  
+**Status:** ✅ Unchanged from v0.2  
+
+```
+b = floor((p/q) * A·s) mod p
+H_n = SHA3-256(LWR(data_n) || H_{n-1})
+```
+
+### Layer 2: Sequential VDF — PoVL (Proof of Verifiable Lattices)
+
+**Files:** `x/privacy/pqc/povl.go`, `block.go`  
+**Algorithm:** N-step sequential hash chain (VDF)  
+**Integration:** ABCI 2.0 PrepareProposal/ProcessProposal  
+**Status:** ✅ Unchanged from v0.2  
+
+### Layer 3: Validator Signatures — Dilithium5 (ML-DSA Level 5)
+
+**File:** `x/privacy/pqc/signature.go`  
+**Library:** `github.com/cloudflare/circl/sign/dilithium/mode5`  
+**Status:** 🆕 **UPGRADE** from Dilithium3 → Dilithium5 in v0.3  
+
+**Key Sizes:**
+- Public key: **2592 bytes** (mode5.PublicKeySize)
+- Private key: **4864 bytes** (mode5.PrivateKeySize)
+- Signature: **4595 bytes** (mode5.SignatureSize)
+
+**API (Go):**
+```go
+// Generate key pair
+kp, err := pqc.GenerateKeyPair()  // -> KeyPair{PublicKey, PrivateKey}
+
+// Sign
+sig, err := pqc.Sign(message, kp.PrivateKey)  // -> []byte (4595 bytes)
+
+// Verify
+ok := pqc.Verify(message, sig, kp.PublicKey)  // -> bool
+```
+
+### Layer 4: TFHE Homomorphic Encryption
+
+**Files:** `x/privacy/tfhe/engine.go` (CGo) + `x/privacy/tfhe/tfhe_c/src/lib.rs` (Rust)  
+**Library:** Zama's `tfhe-rs` v0.6, feature = `integer + x86_64-unix`  
+**Status:** 🆕 **NEW** in v0.3 (replaces the removed ZK-SNARK subsystem)  
+
+**API (Go):**
+```go
+// Key generation (SLOW: 30-120s)
+keys, err := tfhe.GenerateKeys()
+// keys.ClientKey: used for Encrypt/Decrypt (PRIVATE)
+// keys.ServerKey: used for Add/Multiply (can be shared)
+
+// Encrypt
+ct, err := tfhe.EncryptUint32(keys.ClientKey, value)  // -> []byte (~21 KB)
+
+// Homomorphic add: Enc(a) + Enc(b) -> Enc(a+b)
+ctSum, err := tfhe.AddUint32(keys.ServerKey, ct1, ct2)
+
+// Homomorphic multiply: Enc(a) * scalar -> Enc(a*scalar)
+ctMul, err := tfhe.MultiplyScalarUint32(keys.ServerKey, ct, scalar)
+
+// Decrypt
+plaintext, err := tfhe.DecryptUint32(keys.ClientKey, ct)  // -> uint32
+```
+
+**Key Notes:**
+- Server keys are not secret and can be shared with evaluation nodes.
+- CGo calls are serialized using a global mutex (`tfheMu`).
+- Ciphertext size: 16–32 KB (default: ~21 KB for FheUint32).
+
+### Layer 5: Erasure Coding
+
+**File:** `x/privacy/tfhe/erasure.go`  
+**Library:** `github.com/klauspost/reedsolomon` v1.12.1  
+**Parameters:** DataShards=12, ParityShards=4, Total=16 (**v0.4 updated**)  
+**Status:** 🔄 **UPDATED** in v0.4 (was 10+6 in v0.3)  
+
+```go
+// Split 21 KB ciphertext into 16 shards
+shards, err := tfhe.Split(ciphertext)  // -> []ShardResult (16 items)
+
+// Reconstruct from any 12+ shards
+original, err := tfhe.ReconstructFromResults(shards[:12], originalLen)
+```
+
+### Layer 6: Merkle Tree Integrity (NEW v0.4)
+
+**File:** `x/privacy/tfhe/merkle.go`  
+**Algorithm:** Binary Merkle tree — leaves = SHA-256(shard.Data)  
+**Tree Depth:** 4 (log2(16) — no padding needed)  
+**Status:** 🆕 **NEW** in v0.4  
+
+```go
+// Build Merkle tree over all 16 shards
+tree, err := tfhe.BuildMerkleTree(shards)   // -> *MerkleTree
+root := tree.RootBytes()                    // -> []byte (32 bytes, stored on-chain)
+
+// Generate proof for shard i
+proof, err := tree.ProofForShard(i)         // -> *MerkleProof (4 × 32 bytes)
+
+// Verify shard authenticity without downloading all shards
+err = tfhe.VerifyProof(rootHash, i, shardData, proof)
+```
+
+### Layer 7: P2P Shard Distribution
+
+**Files:** `x/privacy/tfhe/shard_store.go`, `shard_distributor.go`  
+**Protocol:** HTTP with Bearer-token auth + rate limiting (60 req/min/IP) (v0.4)  
+**Replication:** **4 copies** per shard across peer nodes (v0.4, was 3)  
+**Status:** 🔄 **HARDENED** in v0.4  
+
+---
+
+## Features REMOVED in v0.3
+
+| Component | Files Removed |
+|---|---|
+| ZK Circuit (Groth16) | `x/privacy/zk/circuit.go` |
+| ZK Verifier | `x/privacy/zk/verifier.go` |
+| ZK Keys | `x/privacy/zk/keys.go` |
+| ZK Commitment | `x/privacy/zk/commitment.go` |
+| PoVL ZK Circuit | `x/privacy/zk/povl_circuit.go` |
+| ZK Transfer Handler | `x/privacy/keeper/msg_server_zk_transfer.go` |
+| gnark dependency | go.mod |
+| gnark-crypto dependency | go.mod |
+| zksetup Makefile target | Makefile |
+| zkprove Makefile target | Makefile |
+
+---
+
+## Feature Flag
 
 ```bash
-# Build dari source
+# Start node with TFHE ENABLED (default: OFF)
+zytheriond start --enable-tfhe
+
+# Start node without TFHE (default):
+zytheriond start
+# -> tx/tfhe_submit transactions will fail with ErrTFHEDisabled
+```
+
+---
+
+## RPC Endpoints
+
+### tx/tfhe_submit
+Submit a TFHE ciphertext to the network for distributed erasure-coded storage.
+
+**Request:**
+```json
+{
+  "sender": "zyth1abc...",
+  "ciphertext": "<base64 ~21KB FheUint32 bytes>"
+}
+```
+
+**Response:**
+```json
+{
+  "commitment_hash": "<base64 32 bytes SHA-256(ciphertext)>",
+  "total_shards": 16,
+  "merkle_root": "<base64 32 bytes — Merkle root of shard hashes>"
+}
+```
+
+**Gas charges:** 1,500 gas per KB of ciphertext (v0.4, was 1,000).  
+**Quota:** Each address may hold at most **1 active commitment** at a time (v0.4).
+
+### query/tfhe_result
+Reconstruct and retrieve a ciphertext from the P2P shard network.
+
+**Request:**
+```json
+{
+  "commitment_hash": "<base64 32 bytes>"
+}
+```
+
+**Response:**
+```json
+{
+  "commitment_hash": "<base64 32 bytes>",
+  "result_ciphertext": "<base64 ~21KB bytes>",
+  "reconstructed_from": 10
+}
+```
+
+---
+
+## Build & Test
+
+```bash
+# 1. Compile tfhe_c Rust static library (first time: 5-15 mins)
+make build-tfhe-rs
+
+# 2. Build Go binary
 make build
 
-# Install ke PATH
-go install ./cmd/zytheriond
-
-# Init konfigurasi node (sekali saja)
-zytheriond init <moniker> --chain-id zytherion
+# 3. Run tests
+make test-pqc       # Dilithium5 tests (fast, ~5s)
+make test-erasure   # Reed-Solomon tests (fast, ~1s) — now tests 12+4 parameters
+make test-tfhe      # TFHE CGo tests (slow, ~5-10 mins)
 ```
 
 ---
 
-## 2. Menjalankan Node
+## Directory Structure (v0.4)
 
-```bash
-# Node validator
-zytheriond start
-
-# Mode development (Ignite)
-ignite chain serve
-
-# Reset data lokal (hati-hati!)
-zytheriond tendermint unsafe-reset-all
+```
+zytherion/
+├── app/
+│   ├── app.go               # Cosmos SDK app — register modules
+│   ├── crypto_startup.go    # Dilithium5 integrity self-test
+│   └── greenbft/            # GreenBFT adaptive commit
+├── x/privacy/
+│   ├── pqc/
+│   │   ├── signature.go     # Dilithium5
+│   │   ├── lwr_hash.go      # Ring-LWR hashing
+│   │   └── povl.go          # Sequential VDF (Proof of Verifiable Lattices)
+│   ├── tfhe/                # TFHE subsystem
+│   │   ├── engine.go        # CGo wrapper for tfhe-rs
+│   │   ├── engine_stub.go   # Pure-Go stub fallback
+│   │   ├── erasure.go       # Reed-Solomon 12+4=16 (v0.4)
+│   │   ├── merkle.go        # Binary Merkle tree over shards (NEW v0.4)
+│   │   ├── shard_store.go   # Disk-based shard storage + Shard{Signature,MerkleProof}
+│   │   ├── shard_distributor.go  # P2P shard server — auth + rate limit + POST handler
+│   │   └── tfhe_c/          # Rust library FFI crate
+│   ├── keeper/
+│   │   ├── keeper.go        # Store + quota helpers (GetTFHEQuota/Incr/Decr)
+│   │   ├── msg_server_tfhe_submit.go  # Handles MsgTFHESubmit (quota, Merkle, gas 1500/KB)
+│   │   └── query_tfhe_result.go       # Handles QueryTFHEResult
+│   ├── types/
+│   │   ├── errors.go        # TFHE errors + ErrTFHEQuotaExceeded (1205), ErrShardAuthFailed (1206)
+│   │   ├── keys.go          # KV store prefixes + TFHEQuotaKeyPrefix
+│   │   └── msg_tfhe_submit.go  # MsgTFHESubmit types
+│   └── zk/                  # DELETED (v0.3)
+├── cmd/zytheriond/cmd/
+│   └── root.go              # CLI setup, version print override
+├── config.yml               # Ignite config
+├── go.mod                   # Removed gnark, added reedsolomon
+└── Makefile                 # Build config
 ```
 
 ---
 
-## 3. Konfigurasi CLI
+## CLI & Transaction Guide (v0.4)
 
+This section explains how to run transactions in the terminal using the `zytheriond` CLI.
+
+### 1. Standard Transaction (Send ZYTC Alice to Bob)
+
+Ensure keys for Alice and Bob are added to the local keyring:
 ```bash
-zytheriond config chain-id zytherion
-zytheriond config keyring-backend os
-zytheriond config node tcp://localhost:26657
-zytheriond config broadcast-mode sync
+# Add Alice & Bob keys
+zytheriond keys add alice --keyring-backend test
+zytheriond keys add bob --keyring-backend test
+```
 
-# Lihat konfigurasi aktif
-zytheriond config
+To send a standard transaction (e.g., `1000zytc` from Alice to Bob):
+```bash
+# Use Bob's address (e.g. zythe1abc...) as the recipient
+zytheriond tx bank send alice <bob_address> 1000zytc \
+  --chain-id zytherion \
+  --keyring-backend test \
+  --fees 200zytc \
+  -y
 ```
 
 ---
 
-## 4. Manajemen Akun
+### 2. TFHE Transaction (Submit Encrypted Ciphertext)
 
+> [!WARNING]
+> If you specify the `--chain-id` flag, you must provide its value (`zytherion`). Leaving the flag empty at the end of the command will result in: `Error: flag needs an argument: --chain-id`. Alternatively, you can omit the flag entirely as it defaults to `"zytherion"`.
+
+> [!IMPORTANT]
+> **v0.4 Quota rule:** Each address may submit at most **1 active TFHE commitment** at a time. A second `tfhe-submit` from the same address will return `ErrTFHEQuotaExceeded`. A `revoke-commitment` command will be available in v0.4.1 to release the quota slot.
+
+To submit a TFHE ciphertext file (`ct1.bin`):
 ```bash
-# Daftar semua akun lokal
-zytheriond keys list
+# Option A: With full chain-id flag (gas >= 500000 recommended; 1500 gas/KB in v0.4)
+zytheriond tx privacy tfhe-submit \
+  --ciphertext ct1.bin \
+  --from alice \
+  --chain-id zytherion \
+  --gas 600000 \
+  --keyring-backend test \
+  -y
 
-# Buat wallet baru (simpan mnemonic!)
-zytheriond keys add <nama_wallet>
-
-# Pulihkan dari mnemonic
-zytheriond keys add <nama_wallet> --recover
-
-# Tampilkan alamat wallet
-zytheriond keys show <nama_wallet> -a
-
-# Tampilkan alamat valoper
-zytheriond keys show <nama_wallet> --bech val -a
-
-# Hapus akun
-zytheriond keys delete <nama_wallet>
+# Option B: Omit chain-id (uses default "zytherion")
+zytheriond tx privacy tfhe-submit \
+  --ciphertext ct1.bin \
+  --from alice \
+  --gas 600000 \
+  --keyring-backend test \
+  -y
 ```
 
 ---
 
-## 5. Transaksi Token
+### 3. Homomorphic Addition Process Flow
 
-```bash
-# Kirim koin
-zytheriond tx bank send <wallet_pengirim> <alamat_penerima> 1000zytc \
-  --fees 200zytc -y
+Homomorphic operations (such as `Add` or `Multiply`) are performed **automatically on the Validator Node (Go & Rust backend)** when processing transactions, not typed as interactive terminal commands by users.
 
-# Simulasi tanpa broadcast (dry-run)
-zytheriond tx bank send <wallet> <alamat_penerima> 1000zytc \
-  --fees 200zytc --dry-run
+The life cycle is illustrated below:
+
+```
+[ Alice (Terminal) ] 
+       │
+       ├─► 1. Encrypt value 10 locally -> ct1.bin
+       ├─► 2. Encrypt value 20 locally -> ct2.bin
+       │
+       ├─► 3. Submit both files via CLI:
+       │      zytheriond tx privacy tfhe-submit --ciphertext ct1.bin ...
+       │      zytheriond tx privacy tfhe-submit --ciphertext ct2.bin ...
+       ▼
+[ Node Validator (State Machine) ]
+       │
+       ├─► 4. Receives ct1 and ct2.
+       ├─► 5. Automatically runs homomorphic addition in backend:
+       │      ctSum = tfhe.AddUint32(serverKey, ct1, ct2)
+       ├─► 6. Stores encrypted ctSum on-chain (without knowing the plaintext is 30).
+       ▼
+[ Alice (Terminal) ]
+       │
+       ├─► 7. Query the encrypted result using the commitment hash:
+       │      zytheriond query privacy commitment <alice_address>
+       │
+       └─► 8. Decrypt the retrieved result offline using Alice's private ClientKey.
+              Output: 30
 ```
 
 ---
 
-## 6. Query Data Blockchain
+---
 
+### 4. Shard Integrity Verification (v0.4)
+
+Each shard received by a peer now carries a Merkle proof. The peer node verifies it automatically before storing:
+
+```
+Shard Server (POST /shard):
+  1. Receive JSON: { commitment_hex, index, data_hex, merkle_root_hex, merkle_proof_hex }
+  2. Decode shard data and Merkle proof.
+  3. Verify: VerifyProof(root, index, shardData, proof)  → 403 Forbidden on failure
+  4. Store shard to local disk on success.  → 201 Created
+```
+
+To query the on-chain Merkle root for a commitment:
 ```bash
-# Saldo wallet
-zytheriond query bank balances <alamat>
-
-# Total supply
-zytheriond query bank total
-
-# Detail transaksi
-zytheriond query tx <tx_hash>
-
-# Lihat blok terbaru
-zytheriond query block
-
-# Blok pada height tertentu
-zytheriond query block <height>
-
-# Status node (dengan jq)
-zytheriond status 2>&1 | jq .SyncInfo
+zytheriond query privacy commitment <alice_address>
+# Shows commitment_hex and the new merkle_root field
 ```
 
 ---
 
-## 7. Staking & Delegasi
-
-```bash
-# Daftar semua validator
-zytheriond query staking validators
-
-# Detail validator
-zytheriond query staking validator <valoper_address>
-
-# Delegasi ke validator
-zytheriond tx staking delegate <valoper_address> 500000zytc \
-  --from <nama_wallet> --fees 200zytc -y
-
-# Pindah delegasi antar validator
-zytheriond tx staking redelegate <valoper_lama> <valoper_baru> 100000zytc \
-  --from <nama_wallet> --fees 200zytc -y
-
-# Cabut delegasi (unbond)
-zytheriond tx staking unbond <valoper_address> 10000zytc \
-  --from <nama_wallet> --fees 200zytc -y
-
-# Lihat delegasi wallet
-zytheriond query staking delegations <alamat>
-
-# Lihat yang sedang unbonding
-zytheriond query staking unbonding-delegations <alamat>
-```
-
----
-
-## 8. Distribusi & Reward
-
-```bash
-# Lihat total reward
-zytheriond query distribution rewards <alamat>
-
-# Ambil semua reward
-zytheriond tx distribution withdraw-all-rewards \
-  --from <nama_wallet> --fees 200zytc -y
-
-# Ambil reward dari validator tertentu
-zytheriond tx distribution withdraw-rewards <valoper_address> \
-  --from <nama_wallet> --fees 200zytc -y
-```
-
----
-
-## 9. Validator Lifecycle
-
-```bash
-# Buat validator baru
-zytheriond tx staking create-validator \
-  --amount=1000000000000zytc \
-  --pubkey=$(zytheriond tendermint show-validator) \
-  --moniker="<nama_validator>" \
-  --chain-id=zytherion \
-  --commission-rate="0.10" \
-  --commission-max-rate="0.20" \
-  --commission-max-change-rate="0.01" \
-  --min-self-delegation="1" \
-  --from=<nama_wallet> --fees 200zytc -y
-
-# Edit info validator
-zytheriond tx staking edit-validator \
-  --moniker="<nama_baru>" \
-  --website="https://zytherion.com" \
-  --from=<nama_wallet> --fees 200zytc -y
-
-# Unjail validator yang kena slashing
-zytheriond tx slashing unjail \
-  --from <nama_wallet> --fees 200zytc -y
-
-# Cek signing info (apakah aktif/jail)
-zytheriond query slashing signing-info $(zytheriond tendermint show-validator)
-```
-
----
-
-## 10. Governance
-
-```bash
-# Semua proposal
-zytheriond query gov proposals
-
-# Detail proposal
-zytheriond query gov proposal 1
-
-# Hasil vote
-zytheriond query gov votes 1
-
-# Submit proposal
-zytheriond tx gov submit-proposal \
-  --title "Upgrade PQC Parameters" \
-  --description "Meningkatkan parameter ring-LWR" \
-  --type "Text" \
-  --deposit 100000000zytc \
-  --from <nama_wallet> --fees 200zytc -y
-
-# Deposit ke proposal
-zytheriond tx gov deposit 1 50000000zytc \
-  --from <nama_wallet> --fees 200zytc -y
-
-# Vote (yes/no/no_with_veto/abstain)
-zytheriond tx gov vote 1 yes \
-  --from <nama_wallet> --fees 200zytc -y
-```
-
----
-
-## 11. Privacy Module (ZK)
-
-```bash
-# Submit ZK Commitment (setelah generate proof off-chain)
-zytheriond tx privacy init-commitment <commitment_hex> \
-  --from <nama_wallet> --fees 200zytc -y
-```
-
-> ZK Proof (Groth16/BN254) dikomputasi *off-chain* terlebih dahulu. Lihat bagian [ZK Tooling](#13-zk-tooling-off-chain).
-
----
-
-## 12. Faucet Development
-
-Saat development lokal via Ignite, faucet aktif otomatis:
-```bash
-curl -X POST "http://localhost:4500" \
-  -H "Content-Type: application/json" \
-  -d '{"address": "<alamat_wallet>"}'
-```
-Default: **100,000,000 zytc (~10 ZYTC)** per request.
-
----
-
-## 13. ZK Tooling Off-chain
-
-```bash
-# Step 1: Trusted Setup (hanya sekali)
-make zksetup
-# Output: keys/verifying_key.bin + keys/proving_key.bin
-
-# WAJIB commit verifying_key.bin ke repo:
-git add keys/verifying_key.bin && git commit -m "zk: add trusted setup VK"
-
-# Step 2: Generate ZK Proof untuk transaksi
-make zkprove AMOUNT=1000000
-# Output: proof.json
-
-# Step 3: Submit proof ke chain
-zytheriond tx privacy init-commitment $(cat proof.json | jq -r .commitment) \
-  --from <nama_wallet> --fees 200zytc -y
-```
-
-> ⚠️ Node akan **panic dan menolak menyala** jika `keys/verifying_key.bin` tidak ditemukan — ini fitur keamanan `fail-fast`.
-
----
-
-## 14. API & Endpoints
-
-### A. Tendermint RPC — Port `26657`
-
-| Endpoint | Deskripsi |
-|---|---|
-| `GET /status` | Status node, sync info |
-| `GET /block?height=<N>` | Data blok pada height N |
-| `GET /tx?hash=<HASH>` | Detail transaksi |
-| `GET /net_info` | Info peer yang terhubung |
-| `POST /broadcast_tx_sync` | Submit TX (tunggu CheckTx) |
-| `POST /broadcast_tx_commit` | Submit TX (tunggu Commit) |
-
-```bash
-curl http://localhost:26657/status
-curl http://localhost:26657/block?height=1
-curl -X POST "http://localhost:26657/broadcast_tx_sync" \
-  -H "Content-Type: application/json" \
-  -d '{"tx": "<base64_tx>"}'
-```
-
----
-
-### B. REST API / LCD — Port `1317`
-
-| Endpoint | Deskripsi |
-|---|---|
-| `GET /cosmos/bank/v1beta1/balances/{address}` | Saldo wallet |
-| `GET /cosmos/bank/v1beta1/supply` | Total supply |
-| `GET /cosmos/staking/v1beta1/validators` | Daftar validator |
-| `GET /cosmos/staking/v1beta1/delegations/{address}` | Delegasi wallet |
-| `GET /cosmos/distribution/v1beta1/delegators/{address}/rewards` | Reward |
-| `GET /cosmos/gov/v1beta1/proposals` | Semua proposal |
-| `GET /cosmos/tx/v1beta1/txs/{hash}` | Detail TX |
-| `POST /cosmos/tx/v1beta1/txs` | Submit TX |
-
-```bash
-curl http://localhost:1317/cosmos/bank/v1beta1/balances/<alamat>
-curl http://localhost:1317/cosmos/staking/v1beta1/validators
-
-# Submit TX via REST
-curl -X POST http://localhost:1317/cosmos/tx/v1beta1/txs \
-  -H "Content-Type: application/json" \
-  -d '{"tx_bytes": "<base64_tx>", "mode": "BROADCAST_MODE_SYNC"}'
-
-# Swagger UI:
-# http://localhost:1317/swagger/
-```
-
----
-
-### C. gRPC — Port `9090`
-
-```bash
-# Cek saldo via grpcurl
-grpcurl -plaintext \
-  -d '{"address": "<alamat>"}' \
-  localhost:9090 \
-  cosmos.bank.v1beta1.Query/AllBalances
-```
-
-**Aktifkan di `~/.zytherion/config/app.toml`:**
-```toml
-[api]
-enable = true
-address = "tcp://0.0.0.0:1317"
-
-[grpc]
-enable = true
-address = "0.0.0.0:9090"
-```
-
----
-
-## 15. Monitoring & Debug
-
-```bash
-# Log real-time
-journalctl -u zytheriond -f --output cat
-
-# Cek height blok saat ini
-curl -s http://localhost:26657/status | jq .result.sync_info.latest_block_height
-
-# Apakah node sudah sinkron? (false = sudah sinkron)
-curl -s http://localhost:26657/status | jq .result.sync_info.catching_up
-
-# Peer yang terhubung
-curl -s http://localhost:26657/net_info | jq .result.peers[].node_info.id
-
-# Profiling (pprof)
-# http://localhost:6060/debug/pprof/
-
-# Jalankan semua unit test
-make test
-
-# Linter
-make lint
-```
+*Founder: **Rayhan Aziel Abbrar** | Version: 0.4.0 | 2026*

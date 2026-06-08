@@ -116,7 +116,6 @@ import (
 	privacymodule "zytherion/x/privacy"
 	privacymodulekeeper "zytherion/x/privacy/keeper"
 	privacymoduletypes "zytherion/x/privacy/types"
-	privacyzk "zytherion/x/privacy/zk"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	appparams "zytherion/app/params"
@@ -528,21 +527,13 @@ func New(
 		),
 	)
 
-	// ── Privacy Module: ZK verifying key ─────────────────────────────────────
-	// Load the Groth16 verifying key from disk. This key is generated once
-	// by `make zksetup` (tools/zksetup) and committed to the repository.
-	// If the file is missing, the node starts in "no-ZK" mode (dev/test only).
-	zkVKPath := filepath.Join(homePath, "keys", "verifying_key.bin")
-	zkVK, zkVKErr := privacyzk.LoadVerifyingKeyBytes(zkVKPath)
-	if zkVKErr != nil {
-		// Also try the repo-relative path (for local dev without $HOME setup).
-		zkVK, zkVKErr = privacyzk.LoadVerifyingKeyBytes("keys/verifying_key.bin")
-	}
-	if zkVKErr != nil {
-		logger.Error("ZK verifying key not found — proof verification disabled (run 'make zksetup')",
-			"error", zkVKErr,
-		)
-		tmos.Exit("FATAL: ZK Verifying Key is missing or corrupted. Refusing to start.")
+	// ── Privacy Module: TFHE feature flag ────────────────────────────────────
+	// Read the --enable-tfhe flag from appOpts. Default: false.
+	// When true, the TFHE subsystem initialises the shard store and distributor.
+	enableTFHE := cast.ToBool(appOpts.Get("enable-tfhe"))
+	nodeID := cast.ToString(appOpts.Get("node-id"))
+	if nodeID == "" {
+		nodeID = "local-node" // fallback for single-node devnet
 	}
 
 	app.PrivacyKeeper = *privacymodulekeeper.NewKeeper(
@@ -551,13 +542,15 @@ func New(
 		keys[privacymoduletypes.MemStoreKey],
 		app.GetSubspace(privacymoduletypes.ModuleName),
 		app.BankKeeper,
-		zkVK,
+		enableTFHE,
+		homePath,
+		nodeID,
 	)
 	privacyModule := privacymodule.NewAppModule(appCodec, app.PrivacyKeeper, app.AccountKeeper, app.BankKeeper)
 
 	// ── Crypto subsystem startup self-test ────────────────────────────────────
-	// Prints a clear OK/FAIL banner for ZK verifier + LWE hash subsystems.
-	RunCryptoStartupChecks(logger, zkVK)
+	// Prints a clear OK/FAIL banner for Dilithium5 + LWR hash subsystems.
+	RunCryptoStartupChecks(logger, enableTFHE)
 
 	// ── Green BFT: Adaptive timeout manager ──────────────────────────────────
 	// Shares the privacy module's KVStore for persisting the suggested timeout.
