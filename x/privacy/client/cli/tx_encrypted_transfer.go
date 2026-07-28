@@ -44,7 +44,7 @@ func CmdTFHESubmit() *cobra.Command {
 		Short: "Submit a TFHE ciphertext to the network for distributed storage (v0.4)",
 		Long: `Submit a TFHE FheUint32 ciphertext to the Zytherion network.
 
-The node must be started with --enable-tfhe for this transaction to succeed.
+TFHE is always active — no --enable-tfhe flag required.
 
 Steps:
 

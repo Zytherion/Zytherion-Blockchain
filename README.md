@@ -32,6 +32,10 @@ The network utilizes a highly optimized execution environment (built on Cosmos S
 | 🛡️ **Post-Quantum Hashing** | Ring-LWR Deterministic Hashing | Quantum-resistant block integrity |
 | ⏱️ **Proof of Verifiable Lattices** | PoVL — Sequential VDF on LWR | Anti-manipulation network clock |
 | 🌿 **Green BFT Consensus** | CometBFT + ABCI 2.0 | Energy-efficient Byzantine fault tolerance |
+| 📊 **Price Oracle** | `x/oracle` Module | Validator-driven Median TWAP price feeds (v0.5 new) |
+| 📦 **IBC Collateral Vault** | `x/ibc-collateral` Module | ICS-20 token middleware and vault locks (v0.5 new) |
+| 🪙 **Multi-Collateral Stablecoin** | `x/stablecoin` Module | Mint/burn/liquidate ZYTD pegged stablecoin (v0.5 new) |
+| 📜 **Smart Contracts** | CosmWasm (`wasmd` v0.45.0) | Permissioned WebAssembly smart contract execution (v0.5 new) |
 
 > [!NOTE]
 > **🔐 TFHE Privacy** — Users encrypt values offline into `FheUint32` ciphertexts. The chain stores, verifies, and evaluates calculations directly on these ciphertexts without decrypting them. ZK-SNARKs were completely removed in v0.3 to eliminate trusted setup risks.
@@ -253,23 +257,27 @@ zytheriond query privacy commitment <alice_address>
 
 ---
 
-## 🗺️ Roadmap (v0.4 Status)
+## 🗺️ Roadmap (v0.5 Status)
 
 - [x] CRYSTALS-Dilithium5 Validator Signing (Cat-5, ~256-bit PQ)
 - [x] Ring-LWR Deterministic Block Hashing (PQC sentinel)
 - [x] Proof of Verifiable Lattices (PoVL — Sequential VDF)
 - [x] ZK-SNARK removal (all gnark, BN254 circuits deleted)
 - [x] TFHE Engine Integration (tfhe-rs via CGo wrapper)
-- [x] Reed-Solomon Erasure Coding (12+4=16 shards) **[v0.4 updated]**
+- [x] Reed-Solomon Erasure Coding (12+4=16 shards)
 - [x] P2P Shard Distribution Server & Store
 - [x] MsgTFHESubmit transaction handler
 - [x] On-demand ciphertext reconstruction API
-- [x] Binary Merkle Tree over shards — root on-chain **[v0.4 new]**
-- [x] Per-shard Merkle proof verification on POST /shard **[v0.4 new]**
-- [x] TFHE submission quota (max 1 per address) **[v0.4 new]**
-- [x] Shard server auth (Bearer token) + rate limiter **[v0.4 new]**
-- [x] ReplicationFactor 3 → 4 **[v0.4 new]**
-- [x] Full Dilithium5 shard signing (ProposerPubkey + Signature) **[v0.4.1 new]**
+- [x] Binary Merkle Tree over shards — root on-chain
+- [x] Per-shard Merkle proof verification on POST /shard
+- [x] TFHE submission quota (max 1 per address)
+- [x] Shard server auth (Bearer token) + rate limiter
+- [x] ReplicationFactor 3 → 4
+- [x] Full Dilithium5 shard signing (ProposerPubkey + Signature)
+- [x] Validator Price Oracle (`x/oracle` Module)
+- [x] IBC Collateral Vaulting (`x/ibc-collateral` Module)
+- [x] ZYTD Stablecoin Engine (`x/stablecoin` Module)
+- [x] Permissioned CosmWasm Smart Contracts (`wasmd` integration)
 - [ ] Multi-node testnet deployment
 - [ ] ZYTC Token Generation Event (TGE)
 - [ ] Web dashboard integration with [zytherion.pages.dev](https://zytherion.pages.dev/)

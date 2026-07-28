@@ -45,7 +45,7 @@
 //! ```
 
 use std::slice;
-use tfhe::{generate_keys, set_server_key, ConfigBuilder, FheUint32};
+use tfhe::{generate_keys, set_server_key, ConfigBuilder, FheUint32, CompressedPublicKey};
 use tfhe::prelude::*;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -56,10 +56,10 @@ use tfhe::prelude::*;
 const CIPHERTEXT_MAX_BYTES: u64 = 32 * 1024; // 32 KB
 
 /// Maximum buffer size for a serialised ClientKey.
-const CLIENT_KEY_MAX_BYTES: u64 = 512 * 1024; // 512 KB (keys are large)
+const CLIENT_KEY_MAX_BYTES: u64 = 16 * 1024 * 1024; // 16 MB
 
 /// Maximum buffer size for a serialised ServerKey.
-const SERVER_KEY_MAX_BYTES: u64 = 8 * 1024 * 1024; // 8 MB (server key is big)
+const SERVER_KEY_MAX_BYTES: u64 = 128 * 1024 * 1024; // 128 MB
 
 // ── Helper macros ─────────────────────────────────────────────────────────────
 
@@ -174,6 +174,46 @@ pub extern "C" fn tfhe_encrypt_u32(
         let client_key: tfhe::ClientKey = bincode::deserialize(ck_slice)?;
 
         let ciphertext: FheUint32 = FheUint32::encrypt(plaintext, &client_key);
+        let ct_bytes = bincode::serialize(&ciphertext)?;
+
+        let out_buf = unsafe { slice_mut_from_raw(ciphertext_out, out_len) };
+        if ct_bytes.len() > out_buf.len() {
+            return Err("Ciphertext exceeds output buffer".into());
+        }
+        out_buf[..ct_bytes.len()].copy_from_slice(&ct_bytes);
+        Ok(ct_bytes.len() as i64)
+    });
+
+    match result {
+        Ok(Ok(n)) => n,
+        _ => -1,
+    }
+}
+
+/// Encrypt a uint32 using a CompressedPublicKey (user-held).
+///
+/// FIX 2 (CVE-ZYTH-002): This function uses the USER's registered
+/// CompressedPublicKey instead of the node's ClientKey. The resulting
+/// ciphertext can ONLY be decrypted by the holder of the matching ClientKey.
+/// Node operators cannot decrypt balances encrypted with this function.
+///
+/// Returns actual ciphertext length (> 0) on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn tfhe_encrypt_u32_pk(
+    pk_bytes: *const u8,
+    pk_len: u64,
+    plaintext: u32,
+    ciphertext_out: *mut u8,
+    out_len: u64,
+) -> i64 {
+    let result = std::panic::catch_unwind(|| -> Result<i64, Box<dyn std::error::Error>> {
+        let pk_slice = unsafe { slice_from_raw(pk_bytes, pk_len) };
+        let public_key: CompressedPublicKey = bincode::deserialize(pk_slice)?;
+
+        // Encrypt using the CompressedPublicKey — no ClientKey required.
+        // The ciphertext is semantically secure: even the encryptor cannot
+        // reverse it without the matching ClientKey.
+        let ciphertext: FheUint32 = FheUint32::encrypt(plaintext, &public_key);
         let ct_bytes = bincode::serialize(&ciphertext)?;
 
         let out_buf = unsafe { slice_mut_from_raw(ciphertext_out, out_len) };
@@ -305,3 +345,50 @@ pub extern "C" fn tfhe_mul_scalar_u32(
         _ => -1,
     }
 }
+
+/// Homomorphic subtraction: result = c1 - c2 (mod 2^32).
+///
+/// Both c1 and c2 must have been encrypted with the same key configuration.
+/// The ServerKey is set as the thread-local evaluation key.
+///
+/// Returns actual result ciphertext length on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn tfhe_sub_u32(
+    sk_bytes: *const u8,
+    sk_len: u64,
+    c1_bytes: *const u8,
+    c1_len: u64,
+    c2_bytes: *const u8,
+    c2_len: u64,
+    result_out: *mut u8,
+    out_len: u64,
+) -> i64 {
+    let result = std::panic::catch_unwind(|| -> Result<i64, Box<dyn std::error::Error>> {
+        let sk_slice = unsafe { slice_from_raw(sk_bytes, sk_len) };
+        let server_key: tfhe::ServerKey = bincode::deserialize(sk_slice)?;
+        set_server_key(server_key);
+
+        let c1_slice = unsafe { slice_from_raw(c1_bytes, c1_len) };
+        let c2_slice = unsafe { slice_from_raw(c2_bytes, c2_len) };
+
+        let ct1: FheUint32 = bincode::deserialize(c1_slice)?;
+        let ct2: FheUint32 = bincode::deserialize(c2_slice)?;
+
+        // Homomorphic subtraction — runs under the server key.
+        let ct_result = ct1 - ct2;
+
+        let res_bytes = bincode::serialize(&ct_result)?;
+        let out_buf = unsafe { slice_mut_from_raw(result_out, out_len) };
+        if res_bytes.len() > out_buf.len() {
+            return Err("Result ciphertext exceeds output buffer".into());
+        }
+        out_buf[..res_bytes.len()].copy_from_slice(&res_bytes);
+        Ok(res_bytes.len() as i64)
+    });
+
+    match result {
+        Ok(Ok(n)) => n,
+        _ => -1,
+    }
+}
+

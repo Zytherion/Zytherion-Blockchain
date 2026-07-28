@@ -7,6 +7,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/tx"
 
 	"zytherion/app/params"
+	dilithium5 "zytherion/crypto/dilithium5"
+	"zytherion/quantumbft"
 )
 
 // makeEncodingConfig creates an EncodingConfig for an amino based test configuration.
@@ -31,5 +33,15 @@ func MakeEncodingConfig() params.EncodingConfig {
 	std.RegisterInterfaces(encodingConfig.InterfaceRegistry)
 	ModuleBasics.RegisterLegacyAminoCodec(encodingConfig.Amino)
 	ModuleBasics.RegisterInterfaces(encodingConfig.InterfaceRegistry)
+
+	// Register Dilithium5 (ML-DSA-87) quantum-safe key types.
+	// This enables accounts with Dilithium5 pubkeys to be stored and retrieved
+	// from the auth module, and enables --key-type dilithium5 in the keyring.
+	dilithium5.RegisterInterfaces(encodingConfig.InterfaceRegistry)
+	dilithium5.RegisterAmino(encodingConfig.Amino)
+
+	// Register QuantumBFT consensus key types in amino.
+	quantumbft.RegisterAmino(encodingConfig.Amino)
+
 	return encodingConfig
 }

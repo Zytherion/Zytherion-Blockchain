@@ -26,5 +26,9 @@ type BankKeeper interface {
 		recipientModule string,
 		amt sdk.Coins,
 	) error
+
+	// BurnCoins burns tokens from a module account.
+	// Used by state rent to destroy collected rent (deflationary).
+	BurnCoins(ctx sdk.Context, moduleName string, amt sdk.Coins) error
 }
 

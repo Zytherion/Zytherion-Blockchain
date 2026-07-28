@@ -3,11 +3,10 @@
 // Endpoint: query/tfhe_result
 //
 // Process:
-//  1. Feature flag check.
-//  2. Look up shard metadata for the requested commitment.
-//  3. Attempt to load the result from the result store (cached from previous evaluation).
-//  4. If not cached: reconstruct the ciphertext from shards (on-demand).
-//  5. Return the ciphertext bytes (base64-encoded in the response).
+//  1. Look up shard metadata for the requested commitment.
+//  2. Attempt to load the result from the result store (cached from previous evaluation).
+//  3. If not cached: reconstruct the ciphertext from shards (on-demand).
+//  4. Return the ciphertext bytes (base64-encoded in the response).
 package keeper
 
 import (
@@ -32,19 +31,13 @@ func (k Keeper) TFHEResult(
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// ── 1. Feature flag check ──────────────────────────────────────────────────
-	if !k.IsTFHEEnabled() {
-		return nil, status.Error(codes.FailedPrecondition,
-			types.ErrTFHEDisabled.Error())
-	}
-
-	// ── 2. Validate commitment hash ────────────────────────────────────────────
+	// ── 1. Validate commitment hash ──────────────────────────────────────────────
 	if len(req.CommitmentHash) != 32 {
 		return nil, status.Errorf(codes.InvalidArgument,
 			"commitment hash must be 32 bytes, got %d", len(req.CommitmentHash))
 	}
 
-	// ── 3. Check result cache ──────────────────────────────────────────────────
+	// ── 2. Check result cache ──────────────────────────────────────────────────
 	if resultCt, ok := k.GetTFHEResult(ctx, req.CommitmentHash); ok {
 		k.Logger(ctx).Debug("tfhe_result: cache hit",
 			"commitment", fmt.Sprintf("%x", req.CommitmentHash[:4]))

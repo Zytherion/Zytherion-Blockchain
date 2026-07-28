@@ -26,17 +26,14 @@ type (
 		paramstore paramtypes.Subspace
 		bankKeeper types.BankKeeper
 
-		// tfheEnabled controls whether TFHE operations are accepted.
-		// Governed by the --enable-tfhe startup flag (default: false).
-		tfheEnabled bool
-
 		// shardStore manages local disk storage of TFHE ciphertext shards.
-		// Non-nil only when tfheEnabled == true.
 		shardStore *tfhe.ShardStore
 
 		// shardDistributor handles P2P shard distribution and reconstruction.
-		// Non-nil only when tfheEnabled == true.
 		shardDistributor *tfhe.ShardDistributor
+
+		// nodeID is the peer ID of this node, used in shard ownership metadata.
+		nodeID string
 	}
 )
 
@@ -45,16 +42,16 @@ type (
 // Parameters:
 //   - cdc, storeKey, memKey, ps: standard Cosmos SDK keeper params.
 //   - bankKeeper: for coin transfers in deposit flows.
-//   - enableTFHE: whether TFHE operations are enabled (--enable-tfhe flag).
 //   - nodeHome: home directory for the node (~/.zytherion).
 //   - nodeID: peer ID of this node for shard ownership metadata.
+//
+// TFHE is always enabled in v0.5.3+.
 func NewKeeper(
 	cdc codec.BinaryCodec,
 	storeKey,
 	memKey storetypes.StoreKey,
 	ps paramtypes.Subspace,
 	bankKeeper types.BankKeeper,
-	enableTFHE bool,
 	nodeHome string,
 	nodeID string,
 ) *Keeper {
@@ -63,23 +60,44 @@ func NewKeeper(
 	}
 
 	k := &Keeper{
-		cdc:         cdc,
-		storeKey:    storeKey,
-		memKey:      memKey,
-		paramstore:  ps,
-		bankKeeper:  bankKeeper,
-		tfheEnabled: enableTFHE,
+		cdc:        cdc,
+		storeKey:   storeKey,
+		memKey:     memKey,
+		paramstore: ps,
+		bankKeeper: bankKeeper,
+		nodeID:     nodeID,
 	}
 
-	if enableTFHE {
-		shardDir := filepath.Join(nodeHome, "tfhe_shards")
-		store, err := tfhe.NewShardStore(shardDir)
-		if err != nil {
-			// Non-fatal: disable TFHE gracefully if shard store cannot be initialised.
-			k.tfheEnabled = false
+	// ── TFHE is always active in v0.5.3+ ──────────────────────────────────────
+	shardDir := filepath.Join(nodeHome, "tfhe_shards")
+	store, err := tfhe.NewShardStore(shardDir)
+	if err != nil {
+		// Non-fatal: log warning but continue — shard operations will fail gracefully.
+		fmt.Printf("[WARN] privacy: TFHE shard store could not be initialised (%v). "+
+			"Erasure-coded ciphertext storage will be unavailable.\n", err)
+	} else {
+		k.shardStore = store
+		k.shardDistributor = tfhe.NewShardDistributor(store, nodeID)
+
+		// ── TFHE Worker Pool ───────────────────────────────────────────────────
+		// Initialise the OS-thread-pinned worker pool that replaces the
+		// old global mutex. Pool size = max(1, NumCPU-2) so two cores are
+		// always reserved for CometBFT consensus and P2P networking.
+		//
+		// ensureKeys() loads keys from disk (~/.zytherion_tfhe_*.key) or
+		// generates a fresh pair if none exist (slow, once-per-node).
+		// The pool blocks until all workers confirm readiness before
+		// returning, so the first AddUint32 call is always safe.
+		_, sk, keyErr := tfhe.EnsureNodeKeys(nodeHome)
+		if keyErr != nil {
+			// Warn but do not crash — pool falls back to direct (serialised)
+			// execution if GetPool() returns nil.
+			fmt.Printf("[WARN] privacy: TFHE worker pool not initialised (key error: %v). "+
+				"Homomorphic operations will fall back to serialised execution.\n", keyErr)
 		} else {
-			k.shardStore = store
-			k.shardDistributor = tfhe.NewShardDistributor(store, nodeID)
+			if _, poolErr := tfhe.InitWorkerPool(sk, 0); poolErr != nil {
+				fmt.Printf("[WARN] privacy: TFHE worker pool init failed: %v\n", poolErr)
+			}
 		}
 	}
 
@@ -94,9 +112,9 @@ func (k Keeper) StoreKey() storetypes.StoreKey {
 	return k.storeKey
 }
 
-// IsTFHEEnabled returns true if the TFHE subsystem is active.
+// IsTFHEEnabled always returns true — TFHE is always active in v0.5.3+.
 func (k Keeper) IsTFHEEnabled() bool {
-	return k.tfheEnabled
+	return true
 }
 
 // ShardStore returns the local disk shard store. May be nil if TFHE is disabled.

@@ -1,7 +1,7 @@
-# Zytherion v0.4 — Architecture Prompt
+# Zytherion v0.5.1 — Architecture Prompt
 
 **Project:** Zytherion Blockchain and Cryptocurrency  
-**Version:** 0.4.0  
+**Version:** 0.5.1  
 **Founder:** Rayhan Aziel Abbrar  
 **Repository:** https://github.com/Zytherion/Zytherion-Blockchain
 
@@ -384,4 +384,13 @@ zytheriond query privacy commitment <alice_address>
 
 ---
 
-*Founder: **Rayhan Aziel Abbrar** | Version: 0.4.0 | 2026*
+## v0.5.1 Module Integrations
+The new modules added in v0.5 / v0.5.1 provide standard DeFi, contract utility, and ecosystem tooling:
+- **Price Oracle (`x/oracle`)**: Median TWAP feeds via validator consensus price submissions.
+- **IBC Collateral (`x/ibc-collateral`)**: ICS-20 middleware locking collateral tokens in a vault.
+- **Stablecoin (`x/stablecoin`)**: Pegged `ZYTD` stablecoin backed by locked IBC collateral.
+- **CosmWasm**: Permissioned contract uploading governed by on-chain authority.
+
+---
+
+*Founder: **Rayhan Aziel Abbrar** | Version: 0.5.1 | 2026*

@@ -41,6 +41,7 @@ import (
 
 	"zytherion/app"
 	appparams "zytherion/app/params"
+	"zytherion/quantumbft"
 )
 
 // NewRootCmd creates a new root command for a Cosmos SDK application
@@ -54,12 +55,13 @@ func NewRootCmd() (*cobra.Command, appparams.EncodingConfig) {
 		WithInput(os.Stdin).
 		WithAccountRetriever(types.AccountRetriever{}).
 		WithHomeDir(app.DefaultNodeHome).
+		WithKeyringOptions(Dilithium5KeyringOptions...).
 		WithViper("")
 
 	rootCmd := &cobra.Command{
 		Use:   app.Name + "d",
-		Short: "Zytherion Blockchain and Cryptocurrency v0.3",
-		Long: `Zytherion Blockchain and Cryptocurrency v0.3
+		Short: "Zytherion Blockchain and Cryptocurrency v0.6 (QuantumBFT)",
+		Long: `Zytherion Blockchain and Cryptocurrency v0.6
 
 Founder: Rayhan Aziel Abbrar
 Website: https://github.com/Zytherion
@@ -67,13 +69,12 @@ Website: https://github.com/Zytherion
 Features:
   - Post-Quantum Signatures: Dilithium5 (ML-DSA Level 5, ~256-bit PQ security)
   - Post-Quantum Hashing:    LWR (Ring-LWR / SHAKE-256)
-  - Consensus:               GreenBFT + PoVL sequential VDF
-  - Privacy:                 TFHE Homomorphic Encryption (FheUint32, tfhe-rs)
+  - Consensus:               QuantumBFT (Dilithium5 validator signing) + GreenBFT + PoVL VDF
+  - Privacy:                 TFHE Homomorphic Encryption (FheUint32, tfhe-rs) — ALWAYS ACTIVE
   - Storage:                 Reed-Solomon Erasure Coding (10+6=16 shards)
-  - ZK-SNARK:                REMOVED in v0.3
 
-Start with TFHE enabled:
-  zytheriond start --enable-tfhe`,
+TFHE is always active — no additional flags required:
+  zytheriond start`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
@@ -168,12 +169,12 @@ func initRootCmd(
 				}
 
 				subCmd.Println("Zytherion Blockchain and Cryptocurrency")
-				subCmd.Println("Version: v0.3.0")
+				subCmd.Println("Version: v0.6.0 (QuantumBFT)")
 				subCmd.Println("Founder: Rayhan Aziel Abbrar")
 				subCmd.Println("Signature: CRYSTALS-Dilithium V (ML-DSA Level 5)")
 				subCmd.Println("Hashing:   LWR (Ring-LWR / SHAKE-256)")
-				subCmd.Println("Consensus: GreenBFT + PoVL VDF")
-				subCmd.Println("TFHE:      tfhe-rs (Zama) via CGo (Default: OFF)")
+				subCmd.Println("Consensus: QuantumBFT (Dilithium5) + GreenBFT + PoVL VDF")
+				subCmd.Println("TFHE:      tfhe-rs (Zama) via CGo (Always ON)")
 				subCmd.Println("ZK-SNARK:  REMOVED (v0.3)")
 
 				if long && originalRunE != nil {
@@ -187,11 +188,16 @@ func initRootCmd(
 	}
 
 	// add keybase, auxiliary RPC, query, and tx child commands
+	// Dilithium5 is registered as a supported algorithm via client context keyring options above.
+	keysCmd := keys.Commands(app.DefaultNodeHome)
+	keysCmd.AddCommand(TFHEKeysCmd())
+
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		queryCommand(),
 		txCommand(),
-		keys.Commands(app.DefaultNodeHome),
+		keysCmd,
+		QuantumBFTCmd(), // QuantumBFT v0.6 — post-quantum consensus key management
 	)
 }
 
@@ -249,14 +255,6 @@ func txCommand() *cobra.Command {
 
 func addModuleInitFlags(startCmd *cobra.Command) {
 	crisis.AddModuleInitFlags(startCmd)
-
-	// -- enable-tfhe: Activate TFHE homomorphic encryption subsystem.
-	// When set, the node initialises the shard store, shard distributor,
-	// and accepts tx/tfhe_submit transactions.
-	startCmd.Flags().Bool("enable-tfhe", false,
-		"Enable TFHE (Fully Homomorphic Encryption) subsystem. "+
-			"Activates erasure-coded ciphertext storage and homomorphic operations. "+
-			"Default: false. Requires Rust tfhe_c library compiled via 'make build-tfhe-rs'.")
 
 	// this line is used by starport scaffolding # root/arguments
 }

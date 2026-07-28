@@ -20,9 +20,9 @@ func initSDKConfig() {
 	config.SetBech32PrefixForValidator(validatorAddressPrefix, validatorPubKeyPrefix)
 	config.SetBech32PrefixForConsensusNode(consNodeAddressPrefix, consNodePubKeyPrefix)
 
-	// Set coin type to 2823 (Zytherion)
+	// Set coin type to 118 (Cosmos standard)
 	config.SetPurpose(44)
-	config.SetCoinType(2823)
+	config.SetCoinType(118)
 
 	config.Seal()
 }

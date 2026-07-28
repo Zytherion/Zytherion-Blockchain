@@ -233,3 +233,49 @@ Zytherion uses CometBFT's ABCI 2.0 hooks to enforce block integrity:
 ```
 
 This sequence prevents block stamp manipulation or timestamp manipulation attacks by malicious proposers.
+
+---
+
+## 9. Oracle Module (`x/oracle`)
+The oracle module allows validators to submit off-chain price feeds. The module maintains a sliding block window (TWAP window) to compute median prices for whitelisted tokens (`ZYTC`, `axlUSDC`, `mUSDT`, `ATOM`, `wBTC`, `wETH`).
+
+- **Median Pricing**: Median calculation prevents outliers from skewing the pricing feed, making it resistant to flash loan manipulation.
+- **Active Pruning**: Old price entries outside of the TWAP window + max age are actively deleted at each block end to keep storage minimal.
+
+```
+Validator Nodes (tx submit-price)
+   │
+   ├─► Store PriceEntry in KVStore: price/<denom>/<height>
+   │
+   └─► BeginBlocker:
+        1. Fetch all PriceEntries within the TWAP window.
+        2. Compute median price.
+        3. Save computed TWAP price to KVStore.
+        4. EndBlocker: Prune price entries older than TwapWindowBlocks + MaxPriceAge.
+```
+
+---
+
+## 10. IBC Collateral Module (`x/ibc-collateral`)
+The `ibc-collateral` module manages the locking and unlocking of whitelisted IBC collateral assets. It acts as an ICS-20 transfer middleware.
+
+- **Vaulting**: Locks assets in a module account named `ibc_collateral_vault`.
+- **Position Tracking**: Tracks user collateral deposits via `CollateralPosition` records in the KVStore.
+- **Middleware**: Intercepts incoming transfer packets via `OnRecvPacket`. If the token is a whitelisted collateral asset, it registers the deposit in the vault.
+
+---
+
+## 11. Stablecoin Module (`x/stablecoin`)
+The `stablecoin` module implements the multi-collateral stablecoin engine. It interacts with both `x/oracle` (to fetch price TWAPs) and `x/ibc-collateral` (to manage collateral backing).
+
+- **Minting ZYTD**: Verifies that the requested ZYTD to mint does not exceed the collateral's USD value divided by the minimum collateral ratio:
+  $$\text{max\_mintable} = \frac{\text{collateral\_amount} \times \text{TWAP}}{\text{min\_ratio}}$$
+- **Burning ZYTD**: Burns the user's ZYTD and returns a proportional amount of their locked collateral.
+- **Liquidation**: If a position's collateral ratio drops below the liquidation threshold, any user can trigger liquidation. The liquidator pays the outstanding ZYTD debt and receives the locked collateral at a discount (seized collateral minus protocol fees).
+
+---
+
+## 12. CosmWasm Integration (`wasmd`)
+The permissioned CosmWasm smart contract engine (`wasmd` v0.45.0 + `wasmvm` v1.5.2) allows developers to write custom dApps in Rust.
+- **Permissioned Mode**: Only authorized accounts or governance proposals can upload smart contract bytecodes (`MsgStoreCode`), keeping the ecosystem secure.
+- **Gas & Sandboxing**: CosmWasm runs inside a secure, gas-metered WebAssembly sandbox, ensuring smart contract execution cannot stall validator nodes.
