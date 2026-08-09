@@ -46,8 +46,10 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -443,16 +445,17 @@ func (d *ShardDistributor) handlePostShard(w http.ResponseWriter, r *http.Reques
 
 // ── Shard Distribution ────────────────────────────────────────────────────────
 
-// DistributeShards distributes shards to randomly selected peer nodes.
+// DistributeShards distributes shards to assigned peer nodes using deterministic
+// hash-based shard placement.
 //
-// Algorithm (v0.4.1):
+// Algorithm (v0.5.4 Distributed Sharding):
 //  1. Build Merkle tree over all shard data.
-//  2. For each of the 16 shards:
-//     a. Generate Merkle proof.
-//     b. Sign SHA-256(shardData) with the node's Dilithium5 private key (if set).
-//     c. Store locally.
-//     d. POST shard + proof + signature to ReplicationFactor-1 random peers.
-//  3. Return TFHEShardMeta (commitment, shard map, Merkle root, ProposerPubkey).
+//  2. Collect all active nodes in the cluster (local nodeID + peerAddrs + env TFHE_PEERS).
+//  3. For each of the 16 shards:
+//     a. Determine assigned replica nodes using hash-based placement.
+//     b. Store shard locally ONLY IF this node is in the assigned replica set.
+//     c. Send shard to remote assigned peers via HTTP POST.
+//  4. Return TFHEShardMeta (commitment, shard map, Merkle root, ProposerPubkey).
 func (d *ShardDistributor) DistributeShards(
 	ctx context.Context,
 	shards []ShardResult,
@@ -483,6 +486,44 @@ func (d *ShardDistributor) DistributeShards(
 		ProposerPubkey: pubKey, // nil when no signing key configured
 	}
 
+	// ── 1. Gather all cluster node IDs ──────────────────────────────────────────
+	nodeID := d.nodeID
+	if nodeID == "" {
+		nodeID = os.Getenv("TFHE_NODE_ID")
+		if nodeID == "" {
+			nodeID = "local_node"
+		}
+	}
+
+	clusterMap := make(map[string]bool)
+	clusterMap[nodeID] = true
+
+	for _, p := range peerAddrs {
+		if strings.TrimSpace(p) != "" {
+			clusterMap[strings.TrimSpace(p)] = true
+		}
+	}
+	if envPeers := os.Getenv("TFHE_PEERS"); envPeers != "" {
+		for _, p := range strings.Split(envPeers, ",") {
+			if strings.TrimSpace(p) != "" {
+				clusterMap[strings.TrimSpace(p)] = true
+			}
+		}
+	}
+
+	clusterNodes := make([]string, 0, len(clusterMap))
+	for n := range clusterMap {
+		clusterNodes = append(clusterNodes, n)
+	}
+	sort.Strings(clusterNodes)
+
+	// Determine replication factor (default ReplicationFactor=4 or number of nodes)
+	replFactor := ReplicationFactor
+	if replFactor > len(clusterNodes) {
+		replFactor = len(clusterNodes)
+	}
+
+	// ── 2. Distribute shards according to deterministic placement ───────────────
 	for _, sr := range shards {
 		// Generate Merkle proof for this shard.
 		proof, err := tree.ProofForShard(sr.Index)
@@ -497,34 +538,52 @@ func (d *ShardDistributor) DistributeShards(
 			return nil, fmt.Errorf("distributor: signing shard %d failed: %w", sr.Index, err)
 		}
 
-		// Always store locally first (data + signature).
-		if err := d.store.StoreShard(commitmentHash, sr.Index, sr.Data); err != nil {
-			return nil, fmt.Errorf("distributor: failed to store shard %d locally: %w",
-				sr.Index, err)
-		}
-		// Persist signature so GET /shard can serve it via X-Shard-Signature header.
-		if err := d.store.StoreShardSignature(commitmentHash, sr.Index, sig); err != nil {
-			return nil, fmt.Errorf("distributor: failed to store signature for shard %d: %w",
-				sr.Index, err)
-		}
-		nodeIDs := []string{d.nodeID}
+		// Deterministic Shard Placement:
+		// Map (commitmentHash + shardIndex) to a primary node in clusterNodes
+		hashInput := fmt.Sprintf("%x_%d", commitmentHash, sr.Index)
+		hArr := sha256.Sum256([]byte(hashInput))
+		primaryIdx := int(hArr[0]) % len(clusterNodes)
 
-		// Select random peers for remote replication.
-		peers := selectRandomPeers(peerAddrs, ReplicationFactor-1)
-		for _, peerAddr := range peers {
-			if err := sendShardToPeer(
-				ctx, peerAddr, d.nodeID,
+		assignedNodes := make([]string, 0, replFactor)
+		for r := 0; r < replFactor; r++ {
+			nIdx := (primaryIdx + r) % len(clusterNodes)
+			assignedNodes = append(assignedNodes, clusterNodes[nIdx])
+		}
+
+		// Check if this local node is assigned to store this shard
+		isLocalAssigned := false
+		for _, target := range assignedNodes {
+			if target == nodeID {
+				isLocalAssigned = true
+				break
+			}
+		}
+
+		if isLocalAssigned {
+			if err := d.store.StoreShard(commitmentHash, sr.Index, sr.Data); err != nil {
+				return nil, fmt.Errorf("distributor: failed to store shard %d locally: %w",
+					sr.Index, err)
+			}
+			if err := d.store.StoreShardSignature(commitmentHash, sr.Index, sig); err != nil {
+				return nil, fmt.Errorf("distributor: failed to store signature for shard %d: %w",
+					sr.Index, err)
+			}
+		}
+
+		// Send shard to remote assigned peers
+		for _, peerAddr := range assignedNodes {
+			if peerAddr == nodeID {
+				continue
+			}
+			_ = sendShardToPeer(
+				ctx, peerAddr, nodeID,
 				commitmentHash, sr.Index, sr.Data,
 				merkleRoot, proofBytes,
 				pubKey, sig,
-			); err != nil {
-				// Non-fatal: log and continue (eventual consistency / proactive repair).
-				continue
-			}
-			nodeIDs = append(nodeIDs, peerAddr)
+			)
 		}
 
-		meta.ShardNodeMap[sr.Index] = nodeIDs
+		meta.ShardNodeMap[sr.Index] = assignedNodes
 	}
 
 	return meta, nil

@@ -118,8 +118,27 @@ import (
 	privacymoduletypes "zytherion/x/privacy/types"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
+	// --- NEW v0.5 ---
+	oraclemodule "zytherion/x/oracle"
+	oraclekeeper "zytherion/x/oracle/keeper"
+	oracletypes "zytherion/x/oracle/types"
+	ibccollateralmodule "zytherion/x/ibc-collateral"
+	ibccollateralkeeper "zytherion/x/ibc-collateral/keeper"
+	ibccollateraltypes "zytherion/x/ibc-collateral/types"
+	stablecoinmodule "zytherion/x/stablecoin"
+	stablecoinkeeper "zytherion/x/stablecoin/keeper"
+	stablecointf "zytherion/x/stablecoin/types"
+
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+	wasm "github.com/CosmWasm/wasmd/x/wasm"
+	tcosmwasm "zytherion/x/privacy/tfhe/cosmwasm"
+	// --- END NEW v0.5 ---
+
 	appparams "zytherion/app/params"
 	"zytherion/app/greenbft"
+	"zytherion/crypto/dilithium5"
+	txsigning "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"zytherion/docs"
 )
 
@@ -178,6 +197,11 @@ var (
 		vesting.AppModuleBasic{},
 		consensus.AppModuleBasic{},
 		privacymodule.AppModuleBasic{},
+		// --- NEW v0.5 ---
+		oraclemodule.AppModuleBasic{},
+		ibccollateralmodule.AppModuleBasic{},
+		stablecoinmodule.AppModuleBasic{},
+		wasm.AppModuleBasic{},
 		// this line is used by starport scaffolding # stargate/app/moduleBasic
 	)
 
@@ -191,7 +215,10 @@ var (
 		stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staking},
 		govtypes.ModuleName:            {authtypes.Burner},
 		ibctransfertypes.ModuleName:    {authtypes.Minter, authtypes.Burner},
-		privacymoduletypes.ModuleName:  {authtypes.Minter, authtypes.Burner, authtypes.Staking},
+		privacymoduletypes.ModuleName:     {authtypes.Minter, authtypes.Burner, authtypes.Staking},
+		// --- NEW v0.5 module accounts ---
+		ibccollateraltypes.ModuleAccountName: {authtypes.Burner, authtypes.Minter},
+		stablecointf.ModuleAccountName:       {authtypes.Burner, authtypes.Minter},
 		// this line is used by starport scaffolding # stargate/app/maccPerms
 	}
 )
@@ -257,6 +284,14 @@ type App struct {
 	PrivacyKeeper privacymodulekeeper.Keeper
 	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
 
+	// --- NEW v0.5 keepers ---
+	OracleKeeper          oraclekeeper.Keeper
+	IBCCollateralKeeper   ibccollateralkeeper.Keeper
+	StablecoinKeeper      stablecoinkeeper.Keeper
+	WasmKeeper            wasmkeeper.Keeper
+	ScopedWasmKeeper      capabilitykeeper.ScopedKeeper
+	// --- END NEW v0.5 keepers ---
+
 	// Green BFT — adaptive commit timeout manager.
 	AdaptiveTimeout *greenbft.AdaptiveTimeoutManager
 
@@ -305,6 +340,11 @@ func New(
 		feegrant.StoreKey, evidencetypes.StoreKey, ibctransfertypes.StoreKey, icahosttypes.StoreKey,
 		capabilitytypes.StoreKey, group.StoreKey, icacontrollertypes.StoreKey, consensusparamtypes.StoreKey,
 		privacymoduletypes.StoreKey,
+		// --- NEW v0.5 store keys ---
+		oracletypes.StoreKey,
+		ibccollateraltypes.StoreKey,
+		stablecointf.StoreKey,
+		wasmtypes.StoreKey,
 		// this line is used by starport scaffolding # stargate/app/storeKey
 	)
 	tkeys := sdk.NewTransientStoreKeys(paramstypes.TStoreKey)
@@ -345,6 +385,8 @@ func New(
 	scopedICAControllerKeeper := app.CapabilityKeeper.ScopeToModule(icacontrollertypes.SubModuleName)
 	scopedTransferKeeper := app.CapabilityKeeper.ScopeToModule(ibctransfertypes.ModuleName)
 	scopedICAHostKeeper := app.CapabilityKeeper.ScopeToModule(icahosttypes.SubModuleName)
+	scopedWasmKeeper := app.CapabilityKeeper.ScopeToModule(wasmtypes.ModuleName)
+	app.ScopedWasmKeeper = scopedWasmKeeper
 	// this line is used by starport scaffolding # stargate/app/scopedKeeper
 
 	// add keepers
@@ -527,13 +569,14 @@ func New(
 		),
 	)
 
-	// ── Privacy Module: TFHE feature flag ────────────────────────────────────
-	// Read the --enable-tfhe flag from appOpts. Default: false.
-	// When true, the TFHE subsystem initialises the shard store and distributor.
-	enableTFHE := cast.ToBool(appOpts.Get("enable-tfhe"))
-	nodeID := cast.ToString(appOpts.Get("node-id"))
+	// ── Privacy Module (TFHE always-on in v0.5.3+) ───────────────────────────
+	// TFHE subsystem initialises unconditionally — no --enable-tfhe flag required.
+	nodeID := cast.ToString(appOpts.Get("moniker"))
 	if nodeID == "" {
-		nodeID = "local-node" // fallback for single-node devnet
+		nodeID = cast.ToString(appOpts.Get("node-id"))
+		if nodeID == "" {
+			nodeID = "local-node" // fallback for single-node devnet
+		}
 	}
 
 	app.PrivacyKeeper = *privacymodulekeeper.NewKeeper(
@@ -542,15 +585,15 @@ func New(
 		keys[privacymoduletypes.MemStoreKey],
 		app.GetSubspace(privacymoduletypes.ModuleName),
 		app.BankKeeper,
-		enableTFHE,
 		homePath,
 		nodeID,
 	)
+	app.PrivacyKeeper.SetStakingKeeper(app.StakingKeeper)
 	privacyModule := privacymodule.NewAppModule(appCodec, app.PrivacyKeeper, app.AccountKeeper, app.BankKeeper)
 
 	// ── Crypto subsystem startup self-test ────────────────────────────────────
-	// Prints a clear OK/FAIL banner for Dilithium5 + LWR hash subsystems.
-	RunCryptoStartupChecks(logger, enableTFHE)
+	// Prints a clear OK/FAIL banner for Dilithium5 + LWR hash + QuantumBFT subsystems.
+	RunCryptoStartupChecksWithHome(logger, homePath)
 
 	// ── Green BFT: Adaptive timeout manager ──────────────────────────────────
 	// Shares the privacy module's KVStore for persisting the suggested timeout.
@@ -558,6 +601,71 @@ func New(
 		keys[privacymoduletypes.StoreKey],
 		logger,
 	)
+
+	// --- NEW v0.5 keeper initialization ---
+	// 1. OracleKeeper — depends on StakingKeeper, BankKeeper
+	app.OracleKeeper = oraclekeeper.NewKeeper(
+		appCodec,
+		keys[oracletypes.StoreKey],
+		app.StakingKeeper,
+	)
+
+	// 2. IBCCollateralKeeper — depends on BankKeeper, AccountKeeper
+	app.IBCCollateralKeeper = ibccollateralkeeper.NewKeeper(
+		appCodec,
+		keys[ibccollateraltypes.StoreKey],
+		app.BankKeeper,
+		app.AccountKeeper,
+	)
+
+	// 3. StablecoinKeeper — depends on BankKeeper, OracleKeeper, IBCCollateralKeeper
+	app.StablecoinKeeper = stablecoinkeeper.NewKeeper(
+		appCodec,
+		keys[stablecointf.StoreKey],
+		app.BankKeeper,
+		app.OracleKeeper,
+		app.IBCCollateralKeeper,
+	)
+
+	// 4. WasmKeeper (permissioned — governance controls upload access)
+	wasmDir := filepath.Join(homePath, "wasm")
+	wasmConfig, err := wasm.ReadWasmConfig(appOpts)
+	if err != nil {
+		panic(fmt.Sprintf("error while reading wasm config: %s", err))
+	}
+	authority := authtypes.NewModuleAddress(govtypes.ModuleName).String()
+
+	// TFHE custom query plugin — enables homomorphic smart contracts.
+	// In stub builds (no -tags tfhe_cgo) the plugin returns a descriptive error;
+	// in tfhe_cgo builds it routes to the Rust-backed TFHE engine.
+	tfheWasmPlugin := tcosmwasm.NewTFHEQueryPlugin()
+	wasmOpts := []wasmkeeper.Option{
+		wasmkeeper.WithQueryPlugins(&wasmkeeper.QueryPlugins{
+			Custom: tfheWasmPlugin,
+		}),
+	}
+
+	app.WasmKeeper = wasmkeeper.NewKeeper(
+		appCodec,
+		keys[wasmtypes.StoreKey],
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.StakingKeeper,
+		distrkeeper.NewQuerier(app.DistrKeeper),
+		app.IBCKeeper.ChannelKeeper,
+		app.IBCKeeper.ChannelKeeper,
+		&app.IBCKeeper.PortKeeper,
+		scopedWasmKeeper,
+		app.TransferKeeper,
+		app.MsgServiceRouter(),
+		app.GRPCQueryRouter(),
+		wasmDir,
+		wasmConfig,
+		"iterator,staking,stargate",
+		authority,
+		wasmOpts...,
+	)
+	// --- END NEW v0.5 keeper initialization ---
 
 	// this line is used by starport scaffolding # stargate/app/keeperDefinition
 
@@ -621,6 +729,12 @@ func New(
 		transferModule,
 		icaModule,
 		privacyModule,
+		// --- NEW v0.5 modules ---
+		oraclemodule.NewAppModule(appCodec, app.OracleKeeper),
+		ibccollateralmodule.NewAppModule(appCodec, app.IBCCollateralKeeper, app.AccountKeeper, app.BankKeeper),
+		stablecoinmodule.NewAppModule(appCodec, app.StablecoinKeeper),
+		wasm.NewAppModule(appCodec, &app.WasmKeeper, app.StakingKeeper, app.AccountKeeper, app.BankKeeper, app.MsgServiceRouter(), app.GetSubspace(wasmtypes.ModuleName)),
+		// --- END NEW v0.5 modules ---
 		// this line is used by starport scaffolding # stargate/app/appModule
 
 		crisis.NewAppModule(app.CrisisKeeper, skipGenesisInvariants, app.GetSubspace(crisistypes.ModuleName)), // always be last to make sure that it checks for all invariants and not only part of them
@@ -654,6 +768,11 @@ func New(
 		vestingtypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		privacymoduletypes.ModuleName,
+		// --- NEW v0.5 begin blockers ---
+		oracletypes.ModuleName,
+		ibccollateraltypes.ModuleName,
+		stablecointf.ModuleName,
+		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/beginBlockers
 	)
 
@@ -680,6 +799,11 @@ func New(
 		vestingtypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		privacymoduletypes.ModuleName,
+		// --- NEW v0.5 end blockers ---
+		oracletypes.ModuleName,
+		ibccollateraltypes.ModuleName,
+		stablecointf.ModuleName,
+		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/endBlockers
 	)
 
@@ -711,6 +835,11 @@ func New(
 		vestingtypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		privacymoduletypes.ModuleName,
+		// --- NEW v0.5 genesis order ---
+		oracletypes.ModuleName,
+		ibccollateraltypes.ModuleName,
+		stablecointf.ModuleName,
+		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
 	}
 	app.mm.SetOrderInitGenesis(genesisModuleOrder...)
@@ -749,7 +878,7 @@ func New(
 			BankKeeper:      app.BankKeeper,
 			SignModeHandler: encodingConfig.TxConfig.SignModeHandler(),
 			FeegrantKeeper:  app.FeeGrantKeeper,
-			SigGasConsumer:  ante.DefaultSigVerificationGasConsumer,
+			SigGasConsumer:  ZytherionSigVerificationGasConsumer,
 		},
 	)
 	if err != nil {
@@ -788,10 +917,31 @@ func New(
 
 	app.ScopedIBCKeeper = scopedIBCKeeper
 	app.ScopedTransferKeeper = scopedTransferKeeper
+	app.ScopedWasmKeeper = scopedWasmKeeper
 	// this line is used by starport scaffolding # stargate/app/beforeInitReturn
+
+	// Zytherion v0.5.0 — Multi-Collateral ZYTD + IBC + CosmWasm
+	// Founder: Rayhan Aziel Abbrar
+	// Modules added: x/oracle, x/ibc-collateral, x/stablecoin, CosmWasm
 
 	return app
 }
+
+// ZytherionSigVerificationGasConsumer handles gas consumption for signature verification,
+// including Post-Quantum Dilithium5 keys as well as standard Cosmos SDK key types.
+func ZytherionSigVerificationGasConsumer(
+	meter sdk.GasMeter, sig txsigning.SignatureV2, params authtypes.Params,
+) error {
+	switch sig.PubKey.(type) {
+	case *dilithium5.PubKey:
+		// Dilithium5 signature verification gas cost (~4x ED25519)
+		meter.ConsumeGas(params.SigVerifyCostED25519*4, "ante verify: dilithium5")
+		return nil
+	default:
+		return ante.DefaultSigVerificationGasConsumer(meter, sig, params)
+	}
+}
+
 
 // DeliverTx overrides BaseApp's DeliverTx to intercept the PoVL sentinel transaction.
 // Because the sentinel is a raw byte array and not a valid protobuf transaction,
@@ -962,6 +1112,12 @@ func (app *App) InitChainer(ctx sdk.Context, req abci.RequestInitChain) abci.Res
 	if err := json.Unmarshal(req.AppStateBytes, &genesisState); err != nil {
 		panic(err)
 	}
+	if req.ConsensusParams != nil {
+		if req.ConsensusParams.Validator != nil {
+			req.ConsensusParams.Validator.PubKeyTypes = []string{"ed25519", "dilithium5"}
+		}
+		app.ConsensusParamsKeeper.Set(ctx, req.ConsensusParams)
+	}
 	app.UpgradeKeeper.SetModuleVersionMap(ctx, app.mm.GetVersionMap())
 	return app.mm.InitGenesis(ctx, app.appCodec, genesisState)
 }
@@ -1074,6 +1230,18 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 		apiSvr.Router,
 		func() sdk.Context { return app.BaseApp.NewContext(true, cmtproto.Header{}) },
 	)
+
+	// ── Privacy: TFHE status REST endpoint (v0.5.3) ──────────
+	// GET /zytherion/privacy/v1/tfhe/status
+	// Returns real-time TFHE subsystem status: enabled, shard store, node ID,
+	// active commitments count, erasure coding params.
+	apiSvr.Router.Handle(
+		"/zytherion/privacy/v1/tfhe/status",
+		privacymodulekeeper.TFHEStatusHTTPHandler(
+			app.PrivacyKeeper,
+			func() sdk.Context { return app.BaseApp.NewContext(true, cmtproto.Header{}) },
+		),
+	)
 }
 
 // RegisterTxService implements the Application.RegisterTxService method.
@@ -1100,15 +1268,15 @@ func (app *App) RegisterNodeService(clientCtx client.Context) {
 func initParamsKeeper(appCodec codec.BinaryCodec, legacyAmino *codec.LegacyAmino, key, tkey storetypes.StoreKey) paramskeeper.Keeper {
 	paramsKeeper := paramskeeper.NewKeeper(appCodec, legacyAmino, key, tkey)
 
-	paramsKeeper.Subspace(authtypes.ModuleName)
-	paramsKeeper.Subspace(banktypes.ModuleName)
-	paramsKeeper.Subspace(stakingtypes.ModuleName)
-	paramsKeeper.Subspace(minttypes.ModuleName)
-	paramsKeeper.Subspace(distrtypes.ModuleName)
-	paramsKeeper.Subspace(slashingtypes.ModuleName)
+	paramsKeeper.Subspace(authtypes.ModuleName).WithKeyTable(authtypes.ParamKeyTable())
+	paramsKeeper.Subspace(banktypes.ModuleName).WithKeyTable(banktypes.ParamKeyTable())
+	paramsKeeper.Subspace(stakingtypes.ModuleName).WithKeyTable(stakingtypes.ParamKeyTable())
+	paramsKeeper.Subspace(minttypes.ModuleName).WithKeyTable(minttypes.ParamKeyTable())
+	paramsKeeper.Subspace(distrtypes.ModuleName).WithKeyTable(distrtypes.ParamKeyTable())
+	paramsKeeper.Subspace(slashingtypes.ModuleName).WithKeyTable(slashingtypes.ParamKeyTable())
 	paramsKeeper.Subspace(govtypes.ModuleName).WithKeyTable(govv1.ParamKeyTable()) //nolint:staticcheck
-	paramsKeeper.Subspace(crisistypes.ModuleName)
-	paramsKeeper.Subspace(ibctransfertypes.ModuleName)
+	paramsKeeper.Subspace(crisistypes.ModuleName).WithKeyTable(crisistypes.ParamKeyTable())
+	paramsKeeper.Subspace(ibctransfertypes.ModuleName).WithKeyTable(ibctransfertypes.ParamKeyTable())
 	paramsKeeper.Subspace(ibcexported.ModuleName)
 	paramsKeeper.Subspace(icacontrollertypes.SubModuleName)
 	paramsKeeper.Subspace(icahosttypes.SubModuleName)

@@ -1,0 +1,20 @@
+syntax = "proto3";
+package zytherion.oracle;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "zytherion/x/oracle/types";
+
+// Msg defines the Msg service for x/oracle.
+service Msg {
+  rpc SubmitPrice(MsgSubmitPrice) returns (MsgSubmitPriceResponse);
+}
+
+// MsgSubmitPrice submits a price feed entry.
+message MsgSubmitPrice {
+  string submitter = 1;
+  string denom     = 2;
+  string price_usd = 3 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Dec", (gogoproto.nullable) = false];
+}
+
+message MsgSubmitPriceResponse {}

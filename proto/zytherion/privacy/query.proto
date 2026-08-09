@@ -3,7 +3,6 @@ package zytherion.privacy;
 
 import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
-import "cosmos/base/query/v1beta1/pagination.proto";
 import "zytherion/privacy/params.proto";
 
 option go_package = "zytherion/x/privacy/types";
@@ -14,6 +13,11 @@ service Query {
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/zytherion/privacy/params";
   }
+
+  // TFHEResult queries the reconstructed TFHE ciphertext result for a commitment.
+  rpc TFHEResult(QueryTFHEResultRequest) returns (QueryTFHEResultResponse) {
+    option (google.api.http).get = "/zytherion/privacy/v1/tfhe/result/{commitment_hash_hex}";
+  }
 }
 
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -23,4 +27,15 @@ message QueryParamsRequest {}
 message QueryParamsResponse {
   // params holds all the parameters of this module.
   Params params = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryTFHEResultRequest {
+  bytes commitment_hash = 1;
+  string commitment_hash_hex = 2;
+}
+
+message QueryTFHEResultResponse {
+  bytes commitment_hash = 1;
+  bytes result_ciphertext = 2;
+  uint32 reconstructed_from = 3;
 }

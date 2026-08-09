@@ -1,4 +1,9 @@
 version: 1
+build:
+  main: cmd/zytheriond
+  flags:
+    - "-tags"
+    - "tfhe_cgo"
 accounts:
   # 1. Public Sale / Ecosystem (45% = 450M ZYTC)
   - name: community_pool
@@ -78,5 +83,5 @@ privacy:
     data_shards: 12          # minimum shards needed for reconstruction
     parity_shards: 4         # redundancy shards (up to 4 nodes can fail)
     replication_factor: 4    # each shard is stored on 4 different nodes
-    max_ciphertext_kb: 32    # maximum accepted ciphertext size (KB)
+    max_ciphertext_kb: 512   # maximum accepted ciphertext size (KB)
     shard_port: 26780        # HTTP port for serving shards to peer requests

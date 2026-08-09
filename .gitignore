@@ -6,4 +6,6 @@ release/
 .DS_Store
 tfhe-tool.exe
 ~$*
+cometbft/
+
 

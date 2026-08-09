@@ -1,0 +1,52 @@
+syntax = "proto3";
+package zytherion.oracle;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+
+option go_package = "zytherion/x/oracle/types";
+
+// Query defines the gRPC querier service for x/oracle.
+service Query {
+  rpc QueryPrice(QueryPriceRequest) returns (QueryPriceResponse) {
+    option (google.api.http).get = "/zytherion/oracle/price/{denom}";
+  }
+  rpc QueryTWAP(QueryTWAPRequest) returns (QueryTWAPResponse) {
+    option (google.api.http).get = "/zytherion/oracle/twap/{denom}";
+  }
+  rpc QueryAllPrices(QueryAllPricesRequest) returns (QueryAllPricesResponse) {
+    option (google.api.http).get = "/zytherion/oracle/prices/{denom}";
+  }
+}
+
+message QueryPriceRequest {
+  string denom = 1;
+}
+
+message QueryPriceResponse {
+  string denom     = 1;
+  string price_usd = 2 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Dec", (gogoproto.nullable) = false];
+  string submitter = 3;
+  int64  height    = 4;
+}
+
+message QueryTWAPRequest {
+  string denom = 1;
+}
+
+message QueryTWAPResponse {
+  string denom        = 1;
+  string twap         = 2 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Dec", (gogoproto.nullable) = false];
+  int64  window_start = 3;
+  int64  window_end   = 4;
+  int32  num_samples  = 5;
+}
+
+message QueryAllPricesRequest {
+  string denom       = 1;
+  int64  from_height = 2;
+}
+
+message QueryAllPricesResponse {
+  repeated QueryPriceResponse prices = 1;
+}

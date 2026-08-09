@@ -1,6 +1,3 @@
-//go:build tfhe_cgo
-// +build tfhe_cgo
-
 // engine_test.go — Unit tests for the TFHE CGo engine.
 //
 // These tests require the Rust library to be compiled first:

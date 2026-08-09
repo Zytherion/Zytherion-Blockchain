@@ -67,6 +67,23 @@ const (
 
 	// AttributeKeyDepositDenom is the event attribute for the deposit coin denomination.
 	AttributeKeyDepositDenom = "deposit_denom"
+
+	// ── State Rent Event Types ────────────────────────────────────────────────
+
+	// EventTypeRentCollected is emitted when rent is successfully charged for
+	// an encrypted commitment. Includes commitment_key, owner, amount, size_bytes.
+	EventTypeRentCollected = "rent_collected"
+
+	// EventTypeRentDefault is emitted when an owner cannot pay rent and their
+	// commitment enters the grace period. Includes commitment_key, owner,
+	// grace_period_blocks, eviction_at_block.
+	EventTypeRentDefault = "rent_default"
+
+	// EventTypeCommitmentEvicted is emitted just before a commitment is pruned
+	// after its grace period expires. External archival nodes (Arweave/Filecoin)
+	// should have captured the blob since EventTypeRentDefault.
+	// Includes commitment_key, grace_started_at, evicted_at, data_size_bytes.
+	EventTypeCommitmentEvicted = "commitment_evicted"
 )
 
 func KeyPrefix(p string) []byte {

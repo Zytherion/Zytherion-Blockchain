@@ -1,19 +1,18 @@
-// msg_server_tfhe_submit.go — TFHE ciphertext submission handler (v0.4).
+// msg_server_tfhe_submit.go — TFHE ciphertext submission handler (v0.5.3).
 //
 // Transaction flow for tx/tfhe_submit:
-//  1. Check TFHE feature flag is enabled (returns ErrTFHEDisabled otherwise).
-//  2. Parse sender address.
-//  3. Validate ciphertext size (must be within [MinCiphertextSize, MaxCiphertextSize]).
-//  4. Quota check: each address may hold at most TFHEMaxActiveCommitments=1 commitment.
-//  5. Compute commitment hash = SHA-256(ciphertext).
-//  6. Split ciphertext into 16 Reed-Solomon shards (DataShards=12, Parity=4).
-//  7. Build Merkle tree over shard hashes; compute MerkleRoot.
-//  8. Distribute shards to random peers (ReplicationFactor=4 each).
-//  9. Attach MerkleRoot to shard metadata; store on-chain.
-// 10. Store commitment for sender.
-// 11. Increment per-address quota counter.
-// 12. Charge additional TFHE gas (1500 gas/KB).
-// 13. Emit event.
+//  1. Parse sender address.
+//  2. Validate ciphertext size (must be within [MinCiphertextSize, MaxCiphertextSize]).
+//  3. Quota check: each address may hold at most TFHEMaxActiveCommitments=1 commitment.
+//  4. Compute commitment hash = SHA-256(ciphertext).
+//  5. Split ciphertext into 16 Reed-Solomon shards (DataShards=12, Parity=4).
+//  6. Build Merkle tree over shard hashes; compute MerkleRoot.
+//  7. Distribute shards to random peers (ReplicationFactor=4 each).
+//  8. Attach MerkleRoot to shard metadata; store on-chain.
+//  9. Store commitment for sender.
+// 10. Increment per-address quota counter.
+// 11. Charge additional TFHE gas (1500 gas/KB).
+// 12. Emit event.
 package keeper
 
 import (
@@ -48,18 +47,13 @@ func (ms msgServer) TFHESubmit(
 ) (*types.MsgTFHESubmitResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// ── 1. Feature flag check ──────────────────────────────────────────────────
-	if !ms.IsTFHEEnabled() {
-		return nil, types.ErrTFHEDisabled
-	}
-
-	// ── 2. Parse sender address ────────────────────────────────────────────────
+	// ── 1. Parse sender address ────────────────────────────────────────────────
 	senderAddr, err := sdk.AccAddressFromBech32(msg.Sender)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid sender — %s", types.ErrInvalidAddress, err)
 	}
 
-	// ── 3. Validate ciphertext ─────────────────────────────────────────────────
+	// ── 2. Validate ciphertext ─────────────────────────────────────────────────
 	if len(msg.Ciphertext) < MinCiphertextSize {
 		return nil, fmt.Errorf("%w: ciphertext too small (%d B < %d B minimum)",
 			types.ErrInvalidCiphertext, len(msg.Ciphertext), MinCiphertextSize)
@@ -99,13 +93,13 @@ func (ms msgServer) TFHESubmit(
 	merkleRoot := merkleTree.RootBytes()
 
 	// ── 8. Distribute shards ───────────────────────────────────────────────────
-	// For PoC: distribute to local store only (no live peer list at tx time).
-	// In production, peer addresses come from the P2P peer store.
+	// Auto-discover active validator monikers from chain state for distributed sharding.
+	peerAddrs := ms.GetValidatorMonikers(ctx)
 	shardMeta, err := ms.ShardDistributor().DistributeShards(
 		ctx.Context(),
 		shards,
 		commitmentHash,
-		[]string{}, // peer addrs — empty for single-node devnet
+		peerAddrs,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: shard distribution failed: %s",

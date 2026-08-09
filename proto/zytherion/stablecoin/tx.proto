@@ -1,0 +1,68 @@
+syntax = "proto3";
+package zytherion.stablecoin;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "zytherion/x/stablecoin/types";
+
+// Msg defines the Msg service for x/stablecoin.
+service Msg {
+  rpc MintZYTD(MsgMintZYTD) returns (MsgMintZYTDResponse);
+  rpc BurnZYTD(MsgBurnZYTD) returns (MsgBurnZYTDResponse);
+  rpc Liquidate(MsgLiquidate) returns (MsgLiquidateResponse);
+  rpc RegisterZYTDKey(MsgRegisterZYTDKey) returns (MsgRegisterZYTDKeyResponse);
+}
+
+// MsgMintZYTD mints ZYTD stablecoin against locked collateral.
+message MsgMintZYTD {
+  string sender                   = 1;
+  string ibc_denom                = 2;
+  string collateral_amount        = 3 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+  string requested_zytd           = 4 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+  int64  expiration_block_height = 5;
+  bytes  dilithium5_pub_key       = 6;
+  bytes  dilithium5_sig           = 7;
+}
+
+message MsgMintZYTDResponse {
+  string minted_amount = 1 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+}
+
+// MsgBurnZYTD burns ZYTD and unlocks proportional collateral.
+message MsgBurnZYTD {
+  string sender                   = 1;
+  string ibc_denom                = 2;
+  string zytd_amount              = 3 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+  int64  expiration_block_height = 4;
+  bytes  dilithium5_pub_key       = 5;
+  bytes  dilithium5_sig           = 6;
+}
+
+message MsgBurnZYTDResponse {
+  string unlocked_amount = 1 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+}
+
+// MsgLiquidate liquidates an undercollateralized position.
+message MsgLiquidate {
+  string liquidator               = 1;
+  string target_owner             = 2;
+  string ibc_denom                = 3;
+  int64  expiration_block_height = 4;
+  bytes  dilithium5_pub_key       = 5;
+  bytes  dilithium5_sig           = 6;
+}
+
+message MsgLiquidateResponse {
+  string seized_amount = 1 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+}
+
+// MsgRegisterZYTDKey registers a Dilithium5 public key.
+message MsgRegisterZYTDKey {
+  string sender                   = 1;
+  bytes  dilithium5_pub_key       = 2;
+  int64  expiration_block_height = 3;
+}
+
+message MsgRegisterZYTDKeyResponse {
+  string registered_pub_key_hash = 1;
+}

@@ -31,10 +31,7 @@ var (
 	ErrInsufficientBalance = sdkerrors.Register(ModuleName, 1108, "insufficient balance for deposit")
 
 	// ── TFHE errors ──────────────────────────────────────────────────────────
-
-	// ErrTFHEDisabled is returned when a TFHE operation is requested but the
-	// node was not started with the --enable-tfhe flag.
-	ErrTFHEDisabled = sdkerrors.Register(ModuleName, 1200, "TFHE subsystem is disabled (start node with --enable-tfhe)")
+	// Note: ErrTFHEDisabled has been removed in v0.5.3 — TFHE is always active.
 
 	// ErrInvalidCiphertext is returned when a submitted TFHE ciphertext is
 	// malformed, the wrong size, or fails commitment validation.
