@@ -12,20 +12,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
-// ── Query types (not in proto yet) ────────────────────────────────────────────
-
-// QueryTFHEResultRequest is the query request for on-demand ciphertext retrieval.
-type QueryTFHEResultRequest struct {
-	CommitmentHash []byte `json:"commitment_hash"`
-}
-
-// QueryTFHEResultResponse returns the reconstructed TFHE ciphertext.
-type QueryTFHEResultResponse struct {
-	CommitmentHash    []byte `json:"commitment_hash"`
-	ResultCiphertext  []byte `json:"result_ciphertext"`
-	ReconstructedFrom uint32 `json:"reconstructed_from"`
-}
-
 // ── sdk.Msg interface for MsgTFHESubmit ───────────────────────────────────────
 
 const TypeMsgTFHESubmit = "tfhe_submit"

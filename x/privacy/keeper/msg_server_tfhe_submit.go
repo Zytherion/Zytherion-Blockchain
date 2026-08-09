@@ -93,13 +93,13 @@ func (ms msgServer) TFHESubmit(
 	merkleRoot := merkleTree.RootBytes()
 
 	// ── 8. Distribute shards ───────────────────────────────────────────────────
-	// For PoC: distribute to local store only (no live peer list at tx time).
-	// In production, peer addresses come from the P2P peer store.
+	// Auto-discover active validator monikers from chain state for distributed sharding.
+	peerAddrs := ms.GetValidatorMonikers(ctx)
 	shardMeta, err := ms.ShardDistributor().DistributeShards(
 		ctx.Context(),
 		shards,
 		commitmentHash,
-		[]string{}, // peer addrs — empty for single-node devnet
+		peerAddrs,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: shard distribution failed: %s",

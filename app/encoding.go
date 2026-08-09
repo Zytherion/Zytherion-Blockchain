@@ -8,7 +8,6 @@ import (
 
 	"zytherion/app/params"
 	dilithium5 "zytherion/crypto/dilithium5"
-	"zytherion/quantumbft"
 )
 
 // makeEncodingConfig creates an EncodingConfig for an amino based test configuration.
@@ -39,9 +38,6 @@ func MakeEncodingConfig() params.EncodingConfig {
 	// from the auth module, and enables --key-type dilithium5 in the keyring.
 	dilithium5.RegisterInterfaces(encodingConfig.InterfaceRegistry)
 	dilithium5.RegisterAmino(encodingConfig.Amino)
-
-	// Register QuantumBFT consensus key types in amino.
-	quantumbft.RegisterAmino(encodingConfig.Amino)
 
 	return encodingConfig
 }

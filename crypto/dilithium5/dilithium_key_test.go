@@ -210,6 +210,23 @@ func TestPrivKeyMarshalRoundtrip(t *testing.T) {
 	require.True(t, sk.Equals(sk2), "privkey marshal roundtrip must be lossless")
 }
 
+// TestPubKeyJSONRoundtrip validates the JSON marshal path used by
+// Cosmos SDK's TxJSONDecoder when decoding genesis transactions.
+func TestPubKeyJSONRoundtrip(t *testing.T) {
+	sk, _ := dilithium5.GenPrivKey()
+	pk := sk.PubKey().(*dilithium5.PubKey)
+
+	// MarshalJSON → UnmarshalJSON roundtrip (Cosmos SDK genesis tx path)
+	jsonBz, err := pk.MarshalJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(jsonBz), "\"key\"")
+
+	pk2 := &dilithium5.PubKey{}
+	err = pk2.UnmarshalJSON(jsonBz)
+	require.NoError(t, err)
+	require.True(t, pk.Equals(pk2), "pubkey JSON roundtrip must be lossless")
+}
+
 // ── Equality tests ────────────────────────────────────────────────────────────
 
 func TestEquality(t *testing.T) {

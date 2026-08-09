@@ -13,6 +13,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/cometbft/cometbft/libs/log"
 
+	"zytherion/crypto/kyber1024"
 	"zytherion/x/privacy/pqc"
 )
 
@@ -50,6 +52,7 @@ func RunCryptoStartupChecks(logger log.Logger) {
 func RunCryptoStartupChecksWithHome(logger log.Logger, home string) {
 	results := []cryptoStatus{
 		checkDilithium5(),
+		checkKyber1024(),
 		checkLWR(),
 		checkTFHEStatus(),
 		checkQuantumBFTStatus(home),
@@ -114,6 +117,62 @@ func checkDilithium5() cryptoStatus {
 		detail: fmt.Sprintf(
 			"pubkey=%dB privkey=%dB sig=%dB  sign=✓ verify=✓ tamper-reject=✓",
 			pqc.DilithiumPublicKeySize, pqc.DilithiumPrivateKeySize, pqc.DilithiumSignatureSize,
+		),
+		elapsed: time.Since(start),
+	}
+}
+
+// ── Kyber1024 self-test ───────────────────────────────────────────────────────
+
+// checkKyber1024 performs KEM keygen, encapsulation, and decapsulation roundtrip.
+func checkKyber1024() cryptoStatus {
+	start := time.Now()
+
+	pub, priv, err := kyber1024.GenKeyPair()
+	if err != nil {
+		return cryptoStatus{
+			name:    "Kyber1024 (ML-KEM Level 5)",
+			ok:      false,
+			detail:  fmt.Sprintf("GenKeyPair failed: %v", err),
+			elapsed: time.Since(start),
+		}
+	}
+
+	ct, ssEnc, err := kyber1024.Encapsulate(pub)
+	if err != nil {
+		return cryptoStatus{
+			name:    "Kyber1024 (ML-KEM Level 5)",
+			ok:      false,
+			detail:  fmt.Sprintf("Encapsulate failed: %v", err),
+			elapsed: time.Since(start),
+		}
+	}
+
+	ssDec, err := kyber1024.Decapsulate(priv, ct)
+	if err != nil {
+		return cryptoStatus{
+			name:    "Kyber1024 (ML-KEM Level 5)",
+			ok:      false,
+			detail:  fmt.Sprintf("Decapsulate failed: %v", err),
+			elapsed: time.Since(start),
+		}
+	}
+
+	if !bytes.Equal(ssEnc, ssDec) {
+		return cryptoStatus{
+			name:    "Kyber1024 (ML-KEM Level 5)",
+			ok:      false,
+			detail:  "Encapsulated and decapsulated shared secrets do not match — CRITICAL BUG",
+			elapsed: time.Since(start),
+		}
+	}
+
+	return cryptoStatus{
+		name: "Kyber1024 (ML-KEM Level 5)",
+		ok:   true,
+		detail: fmt.Sprintf(
+			"pubkey=%dB privkey=%dB ct=%dB secret=%dB  keygen=✓ encaps=✓ decaps=✓",
+			len(pub), len(priv), len(ct), len(ssEnc),
 		),
 		elapsed: time.Since(start),
 	}
@@ -275,6 +334,7 @@ func printStartupBanner(logger log.Logger, results []cryptoStatus) {
 	if allOK {
 		logger.Info("  ✅ ALL CRYPTO SUBSYSTEMS OPERATIONAL — node is READY")
 		logger.Info("     Signature algorithm: Dilithium5 (ML-DSA-87, NIST Cat-5, ~256-bit PQ)")
+		logger.Info("     Key encapsulation:   Kyber1024 (ML-KEM-1024, NIST Cat-5, ~256-bit PQ) ACTIVE")
 		logger.Info("     Block hashing:        LWR (Ring-LWR / SHAKE-256) ACTIVE")
 		logger.Info("     PoVL sequential VDF:  ACTIVE (delay_steps=10)")
 		logger.Info("     ZK-SNARK (Groth16):   REMOVED in v0.3")

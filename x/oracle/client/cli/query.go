@@ -60,7 +60,7 @@ Example:
 				return err
 			}
 
-			bz, err := json.MarshalIndent(res.Price, "", "  ")
+			bz, err := json.MarshalIndent(res, "", "  ")
 			if err != nil {
 				return err
 			}
@@ -102,7 +102,7 @@ Example:
 				return err
 			}
 
-			bz, err := json.MarshalIndent(res.TWAP, "", "  ")
+			bz, err := json.MarshalIndent(res, "", "  ")
 			if err != nil {
 				return err
 			}

@@ -112,16 +112,18 @@ lint:
 ## version: Print the current node version info.
 version:
 	@echo "Zytherion Blockchain and Cryptocurrency"
-	@echo "Version: 0.5.0"
+	@echo "Version: 0.7.0"
 	@echo "Founder: Rayhan Aziel Abbrar"
-	@echo "Signature: Dilithium5 (ML-DSA Level 5, ~256-bit PQ)"
-	@echo "Hashing:   LWR (Ring-LWR / SHAKE-256)"
-	@echo "Consensus: GreenBFT + PoVL VDF"
-	@echo "TFHE:      tfhe-rs (Zama) via CGo"
-	@echo "Stablecoin: ZYTD (Multi-Collateral)"
-	@echo "IBC:       ICS-20 Collateral Vault"
-	@echo "Oracle:    Median TWAP Price Feed"
-	@echo "CosmWasm:  Permissioned Smart Contracts"
+	@echo "Signature:    Dilithium5 (ML-DSA Level 5, ~256-bit PQ)"
+	@echo "Key Exchange: Kyber1024 (ML-KEM-1024, NIST FIPS 203) [NEW v0.7]"
+	@echo "Hashing:      LWR (Ring-LWR / SHAKE-256)"
+	@echo "Consensus:    GreenBFT + PoVL VDF"
+	@echo "TFHE:         tfhe-rs (Zama) via CGo"
+	@echo "P2P:          Kyber1024 + X25519 Hybrid KEM [NEW v0.7]"
+	@echo "Stablecoin:   ZYTD (Multi-Collateral)"
+	@echo "IBC:          ICS-20 Collateral Vault"
+	@echo "Oracle:       Median TWAP Price Feed"
+	@echo "CosmWasm:     Permissioned Smart Contracts"
 
 # ── v0.5 module tests ─────────────────────────────────────────────────────────
 

@@ -111,8 +111,9 @@ func NewAppModule(
 }
 
 // RegisterServices registers the module's services.
-// This module uses legacy ABCI querier routing (no proto-generated gRPC stubs).
-func (am AppModule) RegisterServices(_ module.Configurator) {}
+func (am AppModule) RegisterServices(cfg module.Configurator) {
+	types.RegisterMsgServer(cfg.MsgServer(), keeper.NewMsgServerImpl(am.keeper))
+}
 
 // RegisterInvariants is a no-op (no invariants defined).
 func (am AppModule) RegisterInvariants(_ sdk.InvariantRegistry) {}

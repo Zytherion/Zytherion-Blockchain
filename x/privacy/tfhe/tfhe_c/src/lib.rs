@@ -51,9 +51,9 @@ use tfhe::prelude::*;
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Maximum buffer size for a serialised FheUint32 ciphertext.
-/// In practice tfhe-rs FheUint32 with default params serialises to ~16-21 KB.
-/// We allocate 32 KB to leave headroom for parameter variations.
-const CIPHERTEXT_MAX_BYTES: u64 = 32 * 1024; // 32 KB
+/// tfhe-rs 0.6 FheUint32 with default params serialises to ~200-400 KB.
+/// We allocate 512 KB to leave headroom for all parameter variations.
+const CIPHERTEXT_MAX_BYTES: u64 = 512 * 1024; // 512 KB
 
 /// Maximum buffer size for a serialised ClientKey.
 const CLIENT_KEY_MAX_BYTES: u64 = 16 * 1024 * 1024; // 16 MB

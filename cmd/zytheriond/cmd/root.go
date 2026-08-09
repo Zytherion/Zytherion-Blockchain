@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	dbm "github.com/cometbft/cometbft-db"
 	tmcfg "github.com/cometbft/cometbft/config"
@@ -37,12 +38,15 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	// this line is used by starport scaffolding # root/moduleImport
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+
+	"encoding/json"
 
 	"zytherion/app"
 	appparams "zytherion/app/params"
-	"zytherion/quantumbft"
+	dilithium5 "zytherion/crypto/dilithium5"
 )
+
 
 // NewRootCmd creates a new root command for a Cosmos SDK application
 func NewRootCmd() (*cobra.Command, appparams.EncodingConfig) {
@@ -55,23 +59,25 @@ func NewRootCmd() (*cobra.Command, appparams.EncodingConfig) {
 		WithInput(os.Stdin).
 		WithAccountRetriever(types.AccountRetriever{}).
 		WithHomeDir(app.DefaultNodeHome).
-		WithKeyringOptions(Dilithium5KeyringOptions...).
+		WithKeyringOptions(dilithium5KeyringOption).
 		WithViper("")
 
 	rootCmd := &cobra.Command{
 		Use:   app.Name + "d",
-		Short: "Zytherion Blockchain and Cryptocurrency v0.6 (QuantumBFT)",
-		Long: `Zytherion Blockchain and Cryptocurrency v0.6
+		Short: "Zytherion Blockchain and Cryptocurrency v0.7 (QuantumBFT + ML-KEM)",
+		Long: `Zytherion Blockchain and Cryptocurrency v0.7
 
 Founder: Rayhan Aziel Abbrar
 Website: https://github.com/Zytherion
 
 Features:
-  - Post-Quantum Signatures: Dilithium5 (ML-DSA Level 5, ~256-bit PQ security)
-  - Post-Quantum Hashing:    LWR (Ring-LWR / SHAKE-256)
-  - Consensus:               QuantumBFT (Dilithium5 validator signing) + GreenBFT + PoVL VDF
-  - Privacy:                 TFHE Homomorphic Encryption (FheUint32, tfhe-rs) — ALWAYS ACTIVE
-  - Storage:                 Reed-Solomon Erasure Coding (10+6=16 shards)
+  - Post-Quantum Signatures:    Dilithium5 (ML-DSA Level 5, ~256-bit PQ security)
+  - Post-Quantum Key Exchange:  Kyber1024 (ML-KEM-1024, NIST FIPS 203) NEW v0.7
+  - Post-Quantum Hashing:       LWR (Ring-LWR / SHAKE-256)
+  - Consensus:                  QuantumBFT (Dilithium5 validator signing) + GreenBFT + PoVL VDF
+  - Privacy:                    TFHE Homomorphic Encryption (FheUint32, tfhe-rs) — ALWAYS ACTIVE
+  - P2P Transport:              Hybrid Kyber1024 + X25519 SecretConnection NEW v0.7
+  - Storage:                    Reed-Solomon Erasure Coding (10+6=16 shards)
 
 TFHE is always active — no additional flags required:
   zytheriond start`,
@@ -79,7 +85,8 @@ TFHE is always active — no additional flags required:
 			// set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 			cmd.SetErr(cmd.ErrOrStderr())
-			initClientCtx, err := client.ReadPersistentCommandFlags(initClientCtx, cmd.Flags())
+			var err error
+			initClientCtx, err = client.ReadPersistentCommandFlags(initClientCtx, cmd.Flags())
 			if err != nil {
 				return err
 			}
@@ -87,6 +94,7 @@ TFHE is always active — no additional flags required:
 			if err != nil {
 				return err
 			}
+			initClientCtx = initClientCtx.WithKeyringOptions(dilithium5KeyringOption)
 
 			if err := client.SetCmdClientContextHandler(initClientCtx, cmd); err != nil {
 				return err
@@ -104,15 +112,36 @@ TFHE is always active — no additional flags required:
 	overwriteFlagDefaults(rootCmd, map[string]string{
 		flags.FlagChainID:        strings.ReplaceAll(app.Name, "-", ""),
 		flags.FlagKeyringBackend: "test",
+		"key-type":               "dilithium5",
 	})
 
 	return rootCmd, encodingConfig
 }
 
-// initTendermintConfig helps to override default Tendermint Config values.
-// return tmcfg.DefaultConfig if no custom configuration is required for the application.
+// initTendermintConfig overrides CometBFT default timeouts for Zytherion.
+//
+// All timeout values are set to 1s (from the original 5s default) to maximise
+// block throughput. GreenBFT's idle-window FHE scheduler is compact enough to
+// run within a 1s block interval, so there is no latency penalty.
 func initTendermintConfig() *tmcfg.Config {
 	cfg := tmcfg.DefaultConfig()
+
+	// ── Consensus timeouts (all 1 second) ─────────────────────────────────
+	// TimeoutPropose: how long a validator waits for a block proposal before
+	//   moving to the next round. Lower = faster round recovery.
+	cfg.Consensus.TimeoutPropose = 1 * time.Second
+	// TimeoutProposeDelta: added per round to TimeoutPropose (backoff).
+	cfg.Consensus.TimeoutProposeDelta = 500 * time.Millisecond
+	// TimeoutPrevote: wait for +2/3 prevotes before moving to precommit.
+	cfg.Consensus.TimeoutPrevote = 1 * time.Second
+	cfg.Consensus.TimeoutPrevoteDelta = 500 * time.Millisecond
+	// TimeoutPrecommit: wait for +2/3 precommits before committing block.
+	cfg.Consensus.TimeoutPrecommit = 1 * time.Second
+	cfg.Consensus.TimeoutPrecommitDelta = 500 * time.Millisecond
+	// TimeoutCommit: delay after committing a block before starting next round.
+	//   This is the primary lever for block time. 1s → ~1 block/second.
+	cfg.Consensus.TimeoutCommit = 1 * time.Second
+
 	return cfg
 }
 
@@ -125,7 +154,7 @@ func initRootCmd(
 
 	gentxModule := app.ModuleBasics[genutiltypes.ModuleName].(genutil.AppModuleBasic)
 	rootCmd.AddCommand(
-		genutilcli.InitCmd(app.ModuleBasics, app.DefaultNodeHome),
+		safeInitCmd(),
 		genutilcli.CollectGenTxsCmd(banktypes.GenesisBalancesIterator{}, app.DefaultNodeHome, gentxModule.GenTxValidator),
 		genutilcli.MigrateGenesisCmd(),
 		genutilcli.GenTxCmd(
@@ -169,13 +198,15 @@ func initRootCmd(
 				}
 
 				subCmd.Println("Zytherion Blockchain and Cryptocurrency")
-				subCmd.Println("Version: v0.6.0 (QuantumBFT)")
+				subCmd.Println("Version: v0.7.0 (QuantumBFT + ML-KEM)")
 				subCmd.Println("Founder: Rayhan Aziel Abbrar")
-				subCmd.Println("Signature: CRYSTALS-Dilithium V (ML-DSA Level 5)")
-				subCmd.Println("Hashing:   LWR (Ring-LWR / SHAKE-256)")
-				subCmd.Println("Consensus: QuantumBFT (Dilithium5) + GreenBFT + PoVL VDF")
-				subCmd.Println("TFHE:      tfhe-rs (Zama) via CGo (Always ON)")
-				subCmd.Println("ZK-SNARK:  REMOVED (v0.3)")
+				subCmd.Println("Signature:   CRYSTALS-Dilithium5 (ML-DSA Level 5)")
+				subCmd.Println("Key Exchange: CRYSTALS-Kyber1024 (ML-KEM-1024) [NEW v0.7]")
+				subCmd.Println("Hashing:     LWR (Ring-LWR / SHAKE-256)")
+				subCmd.Println("Consensus:   QuantumBFT (Dilithium5) + GreenBFT + PoVL VDF")
+				subCmd.Println("TFHE:        tfhe-rs (Zama) via CGo (Always ON)")
+				subCmd.Println("P2P:         Kyber1024 + X25519 Hybrid KEM [NEW v0.7]")
+				subCmd.Println("ZK-SNARK:    REMOVED (v0.3)")
 
 				if long && originalRunE != nil {
 					subCmd.Println()
@@ -188,16 +219,16 @@ func initRootCmd(
 	}
 
 	// add keybase, auxiliary RPC, query, and tx child commands
-	// Dilithium5 is registered as a supported algorithm via client context keyring options above.
+	// Dilithium5 + Kyber1024 are registered as supported algorithms via keyring options.
 	keysCmd := keys.Commands(app.DefaultNodeHome)
 	keysCmd.AddCommand(TFHEKeysCmd())
+	keysCmd.AddCommand(KyberCmd())
 
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		queryCommand(),
 		txCommand(),
 		keysCmd,
-		QuantumBFTCmd(), // QuantumBFT v0.6 — post-quantum consensus key management
 	)
 }
 
@@ -423,4 +454,42 @@ func initAppConfig() (string, interface{}) {
 	customAppTemplate := serverconfig.DefaultConfigTemplate
 
 	return customAppTemplate, customAppConfig
+}
+
+func safeInitCmd() *cobra.Command {
+	cmd := genutilcli.InitCmd(app.ModuleBasics, app.DefaultNodeHome)
+	originalRunE := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		home, _ := cmd.Flags().GetString(flags.FlagHome)
+		if home == "" {
+			home = app.DefaultNodeHome
+		}
+		// Clear leftover key/genesis files and database from previous runs to guarantee clean init
+		_ = os.Remove(filepath.Join(home, "config", "priv_validator_key.json"))
+		_ = os.Remove(filepath.Join(home, "config", "genesis.json"))
+		_ = os.RemoveAll(filepath.Join(home, "data"))
+		return originalRunE(cmd, args)
+	}
+	return cmd
+}
+
+
+func displayInitOutput(cmd *cobra.Command, toPrint interface{}) error {
+	out, err := json.MarshalIndent(toPrint, "", " ")
+	if err != nil {
+		return err
+	}
+	cmd.Println(string(out))
+	return nil
+}
+
+
+
+
+
+
+
+func dilithium5KeyringOption(options *keyring.Options) {
+	options.SupportedAlgos = append(options.SupportedAlgos, dilithium5.Dilithium5Algo)
+	options.SupportedAlgosLedger = append(options.SupportedAlgosLedger, dilithium5.Dilithium5Algo)
 }

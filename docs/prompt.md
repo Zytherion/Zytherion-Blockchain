@@ -1,396 +1,342 @@
-# Zytherion v0.5.1 — Architecture Prompt
+# Zytherion Blockchain v0.7 — Panduan Perintah CLI & Modul (Quantum-Only Stack)
 
 **Project:** Zytherion Blockchain and Cryptocurrency  
-**Version:** 0.5.1  
+**Version:** 0.7.0 (QuantumBFT + ML-KEM)  
+**Chain ID:** `zytherion`  
 **Founder:** Rayhan Aziel Abbrar  
-**Repository:** https://github.com/Zytherion/Zytherion-Blockchain
+**Repository:** https://github.com/Zytherion/Zytherion-Blockchain  
 
 ---
 
-## System Description
-
-Zytherion is a Layer-1 blockchain built on **Cosmos SDK v0.47 + CometBFT v0.37** featuring post-quantum cryptographic primitives and a fully homomorphic encryption privacy module.
-
-**Tech Stack:**
-- Languages: **Go** (main codebase) + **Rust** (TFHE library via CGo binding)
-- Framework: Cosmos SDK (IBC, Gov, Staking, Bank, Privacy module)
-- Consensus: CometBFT BFT + GreenBFT extensions
-- Hashing: Ring-LWR (post-quantum, pure integer arithmetic)
-- Signatures: **Dilithium5 (ML-DSA Level 5)** — NIST Cat-5, ~256-bit PQ security
-- Privacy: **TFHE via tfhe-rs** (Zama) — FheUint32 operations
-- Storage: **Reed-Solomon erasure coding** (12+4=16 shards, v0.4)
-- Integrity: **Binary Merkle Tree** (SHA-256) over shard set — root stored on-chain (v0.4)
+> ⚡ **RULE UTAMA (V0.7 MANDATE): QUANTUM-ONLY CRYPTOGRAPHY**
+> 
+> Seluruh sistem Zytherion v0.7 beroperasi di bawah aturan **Quantum-Only**:
+> 1. **Tanda Tangan Digital (Signing):** Wajib **Dilithium5 (ML-DSA Level 5)**. Algoritma klasik (secp256k1/ed25519) dilarang untuk transaksi/konsensus utama.
+> 2. **Key Encapsulation / Key Exchange (KEM):** Wajib **CRYSTALS-Kyber1024 (ML-KEM-1024)**.
+> 3. **Transport P2P:** Wajib **Hybrid Kyber1024 + X25519 SecretConnection**.
+> 4. **Privasi & Enkripsi Data:** Wajib **TFHE (FheUint32)**.
 
 ---
 
-## Cryptographic Architecture (v0.4)
+## 🔑 Spesifikasi & Ukuran Kunci Post-Quantum (v0.7)
 
-### Layer 1: Block Hashing — Ring-LWR
+Ukuran kunci di Zytherion jauh lebih besar dibanding algoritma klasik karena menggunakan matematika *lattice-based*:
 
-**Files:** `x/privacy/pqc/lwr_hash.go`, `hashing.go`  
-**Algorithm:** Learning With Rounding in the Ring $Rq = \mathbb{Z}_q[X]/(X^n+1)$  
-**Parameters:** $n=256$, $q=3329$, $p=256$, output size $= 96$ bytes  
-**Status:** ✅ Unchanged from v0.2  
-
-```
-b = floor((p/q) * A·s) mod p
-H_n = SHA3-256(LWR(data_n) || H_{n-1})
-```
-
-### Layer 2: Sequential VDF — PoVL (Proof of Verifiable Lattices)
-
-**Files:** `x/privacy/pqc/povl.go`, `block.go`  
-**Algorithm:** N-step sequential hash chain (VDF)  
-**Integration:** ABCI 2.0 PrepareProposal/ProcessProposal  
-**Status:** ✅ Unchanged from v0.2  
-
-### Layer 3: Validator Signatures — Dilithium5 (ML-DSA Level 5)
-
-**File:** `x/privacy/pqc/signature.go`  
-**Library:** `github.com/cloudflare/circl/sign/dilithium/mode5`  
-**Status:** 🆕 **UPGRADE** from Dilithium3 → Dilithium5 in v0.3  
-
-**Key Sizes:**
-- Public key: **2592 bytes** (mode5.PublicKeySize)
-- Private key: **4864 bytes** (mode5.PrivateKeySize)
-- Signature: **4595 bytes** (mode5.SignatureSize)
-
-**API (Go):**
-```go
-// Generate key pair
-kp, err := pqc.GenerateKeyPair()  // -> KeyPair{PublicKey, PrivateKey}
-
-// Sign
-sig, err := pqc.Sign(message, kp.PrivateKey)  // -> []byte (4595 bytes)
-
-// Verify
-ok := pqc.Verify(message, sig, kp.PublicKey)  // -> bool
-```
-
-### Layer 4: TFHE Homomorphic Encryption
-
-**Files:** `x/privacy/tfhe/engine.go` (CGo) + `x/privacy/tfhe/tfhe_c/src/lib.rs` (Rust)  
-**Library:** Zama's `tfhe-rs` v0.6, feature = `integer + x86_64-unix`  
-**Status:** 🆕 **NEW** in v0.3 (replaces the removed ZK-SNARK subsystem)  
-
-**API (Go):**
-```go
-// Key generation (SLOW: 30-120s)
-keys, err := tfhe.GenerateKeys()
-// keys.ClientKey: used for Encrypt/Decrypt (PRIVATE)
-// keys.ServerKey: used for Add/Multiply (can be shared)
-
-// Encrypt
-ct, err := tfhe.EncryptUint32(keys.ClientKey, value)  // -> []byte (~21 KB)
-
-// Homomorphic add: Enc(a) + Enc(b) -> Enc(a+b)
-ctSum, err := tfhe.AddUint32(keys.ServerKey, ct1, ct2)
-
-// Homomorphic multiply: Enc(a) * scalar -> Enc(a*scalar)
-ctMul, err := tfhe.MultiplyScalarUint32(keys.ServerKey, ct, scalar)
-
-// Decrypt
-plaintext, err := tfhe.DecryptUint32(keys.ClientKey, ct)  // -> uint32
-```
-
-**Key Notes:**
-- Server keys are not secret and can be shared with evaluation nodes.
-- CGo calls are serialized using a global mutex (`tfheMu`).
-- Ciphertext size: 16–32 KB (default: ~21 KB for FheUint32).
-
-### Layer 5: Erasure Coding
-
-**File:** `x/privacy/tfhe/erasure.go`  
-**Library:** `github.com/klauspost/reedsolomon` v1.12.1  
-**Parameters:** DataShards=12, ParityShards=4, Total=16 (**v0.4 updated**)  
-**Status:** 🔄 **UPDATED** in v0.4 (was 10+6 in v0.3)  
-
-```go
-// Split 21 KB ciphertext into 16 shards
-shards, err := tfhe.Split(ciphertext)  // -> []ShardResult (16 items)
-
-// Reconstruct from any 12+ shards
-original, err := tfhe.ReconstructFromResults(shards[:12], originalLen)
-```
-
-### Layer 6: Merkle Tree Integrity (NEW v0.4)
-
-**File:** `x/privacy/tfhe/merkle.go`  
-**Algorithm:** Binary Merkle tree — leaves = SHA-256(shard.Data)  
-**Tree Depth:** 4 (log2(16) — no padding needed)  
-**Status:** 🆕 **NEW** in v0.4  
-
-```go
-// Build Merkle tree over all 16 shards
-tree, err := tfhe.BuildMerkleTree(shards)   // -> *MerkleTree
-root := tree.RootBytes()                    // -> []byte (32 bytes, stored on-chain)
-
-// Generate proof for shard i
-proof, err := tree.ProofForShard(i)         // -> *MerkleProof (4 × 32 bytes)
-
-// Verify shard authenticity without downloading all shards
-err = tfhe.VerifyProof(rootHash, i, shardData, proof)
-```
-
-### Layer 7: P2P Shard Distribution
-
-**Files:** `x/privacy/tfhe/shard_store.go`, `shard_distributor.go`  
-**Protocol:** HTTP with Bearer-token auth + rate limiting (60 req/min/IP) (v0.4)  
-**Replication:** **4 copies** per shard across peer nodes (v0.4, was 3)  
-**Status:** 🔄 **HARDENED** in v0.4  
+| Algoritma | Jenis / Fungsi | Public Key Size | Private Key Size | Subcommand CLI |
+|---|---|---|---|---|
+| **Dilithium5 (ML-DSA-87)** | Digital Signature (Blok & Akun) | **2,592 bytes** | **4,858 bytes** | `zytheriond keys add <nama>` *(Default v0.7)* |
+| **Kyber1024 (ML-KEM-1024)** | Key Encapsulation (Enkripsi File & KEM) | **1,568 bytes** | **3,168 bytes** | `zytheriond keys kyber keygen` |
+| **TFHE (FheUint32)** | Homomorphic Encryption (Kalkulasi Rahasia) | **112 MB** *(ServerKey)* | **22.6 KB** *(ClientKey)* | `zytheriond keys tfhe keygen` |
 
 ---
 
-## Features REMOVED in v0.3
+## 1. Manajemen Akun & Transaksi Dasar ZYTC
 
-| Component | Files Removed |
-|---|---|
-| ZK Circuit (Groth16) | `x/privacy/zk/circuit.go` |
-| ZK Verifier | `x/privacy/zk/verifier.go` |
-| ZK Keys | `x/privacy/zk/keys.go` |
-| ZK Commitment | `x/privacy/zk/commitment.go` |
-| PoVL ZK Circuit | `x/privacy/zk/povl_circuit.go` |
-| ZK Transfer Handler | `x/privacy/keeper/msg_server_zk_transfer.go` |
-| gnark dependency | go.mod |
-| gnark-crypto dependency | go.mod |
-| zksetup Makefile target | Makefile |
-| zkprove Makefile target | Makefile |
-
----
-
-## Feature Flag
-
+### A. Memeriksa Saldo Akun (`q bank balances`)
+**Fungsi:** Melihat jumlah koin ZYTC atau token lainnya yang dimiliki oleh alamat akun Alice.
 ```bash
-# Start node with TFHE ENABLED (default: OFF)
-zytheriond start --enable-tfhe
-
-# Start node without TFHE (default):
-zytheriond start
-# -> tx/tfhe_submit transactions will fail with ErrTFHEDisabled
+zytheriond q bank balances zyth1qfd89spzuajhdpwwhtu9k2rtetwcff2g2ncq8g \
+  --node tcp://localhost:26657
 ```
 
----
-
-## RPC Endpoints
-
-### tx/tfhe_submit
-Submit a TFHE ciphertext to the network for distributed erasure-coded storage.
-
-**Request:**
-```json
-{
-  "sender": "zyth1abc...",
-  "ciphertext": "<base64 ~21KB FheUint32 bytes>"
-}
-```
-
-**Response:**
-```json
-{
-  "commitment_hash": "<base64 32 bytes SHA-256(ciphertext)>",
-  "total_shards": 16,
-  "merkle_root": "<base64 32 bytes — Merkle root of shard hashes>"
-}
-```
-
-**Gas charges:** 1,500 gas per KB of ciphertext (v0.4, was 1,000).  
-**Quota:** Each address may hold at most **1 active commitment** at a time (v0.4).
-
-### query/tfhe_result
-Reconstruct and retrieve a ciphertext from the P2P shard network.
-
-**Request:**
-```json
-{
-  "commitment_hash": "<base64 32 bytes>"
-}
-```
-
-**Response:**
-```json
-{
-  "commitment_hash": "<base64 32 bytes>",
-  "result_ciphertext": "<base64 ~21KB bytes>",
-  "reconstructed_from": 10
-}
-```
-
----
-
-## Build & Test
-
+### B. Memeriksa Detail Akun & Sequence Number (`q auth account`)
+**Fungsi:** Melihat `account_number` dan `sequence` (nonce transaksi terkini) untuk mencegah kesalahan transaksi berurutan.
 ```bash
-# 1. Compile tfhe_c Rust static library (first time: 5-15 mins)
-make build-tfhe-rs
-
-# 2. Build Go binary
-make build
-
-# 3. Run tests
-make test-pqc       # Dilithium5 tests (fast, ~5s)
-make test-erasure   # Reed-Solomon tests (fast, ~1s) — now tests 12+4 parameters
-make test-tfhe      # TFHE CGo tests (slow, ~5-10 mins)
+zytheriond q auth account zyth1qfd89spzuajhdpwwhtu9k2rtetwcff2g2ncq8g \
+  --node tcp://localhost:26657
 ```
 
----
-
-## Directory Structure (v0.4)
-
-```
-zytherion/
-├── app/
-│   ├── app.go               # Cosmos SDK app — register modules
-│   ├── crypto_startup.go    # Dilithium5 integrity self-test
-│   └── greenbft/            # GreenBFT adaptive commit
-├── x/privacy/
-│   ├── pqc/
-│   │   ├── signature.go     # Dilithium5
-│   │   ├── lwr_hash.go      # Ring-LWR hashing
-│   │   └── povl.go          # Sequential VDF (Proof of Verifiable Lattices)
-│   ├── tfhe/                # TFHE subsystem
-│   │   ├── engine.go        # CGo wrapper for tfhe-rs
-│   │   ├── engine_stub.go   # Pure-Go stub fallback
-│   │   ├── erasure.go       # Reed-Solomon 12+4=16 (v0.4)
-│   │   ├── merkle.go        # Binary Merkle tree over shards (NEW v0.4)
-│   │   ├── shard_store.go   # Disk-based shard storage + Shard{Signature,MerkleProof}
-│   │   ├── shard_distributor.go  # P2P shard server — auth + rate limit + POST handler
-│   │   └── tfhe_c/          # Rust library FFI crate
-│   ├── keeper/
-│   │   ├── keeper.go        # Store + quota helpers (GetTFHEQuota/Incr/Decr)
-│   │   ├── msg_server_tfhe_submit.go  # Handles MsgTFHESubmit (quota, Merkle, gas 1500/KB)
-│   │   └── query_tfhe_result.go       # Handles QueryTFHEResult
-│   ├── types/
-│   │   ├── errors.go        # TFHE errors + ErrTFHEQuotaExceeded (1205), ErrShardAuthFailed (1206)
-│   │   ├── keys.go          # KV store prefixes + TFHEQuotaKeyPrefix
-│   │   └── msg_tfhe_submit.go  # MsgTFHESubmit types
-│   └── zk/                  # DELETED (v0.3)
-├── cmd/zytheriond/cmd/
-│   └── root.go              # CLI setup, version print override
-├── config.yml               # Ignite config
-├── go.mod                   # Removed gnark, added reedsolomon
-└── Makefile                 # Build config
-```
-
----
-
-## CLI & Transaction Guide (v0.4)
-
-This section explains how to run transactions in the terminal using the `zytheriond` CLI.
-
-### 1. Standard Transaction (Send ZYTC Alice to Bob)
-
-Ensure keys for Alice and Bob are added to the local keyring:
+### C. Mengirim Koin ZYTC (`tx bank send`)
+**Fungsi:** Mentransfer koin ZYTC dari akun Alice (`zyth1qfd89...`) ke Bob (`zyth19x06f...`) secara publik.
 ```bash
-# Add Alice & Bob keys
-zytheriond keys add alice --keyring-backend test
-zytheriond keys add bob --keyring-backend test
-```
-
-To send a standard transaction (e.g., `1000zytc` from Alice to Bob):
-```bash
-# Use Bob's address (e.g. zythe1abc...) as the recipient
-zytheriond tx bank send alice <bob_address> 1000zytc \
+zytheriond tx bank send alice zyth19x06fdff9e04xdyknpzpugzwjklqu2q3uuu2cv 10000zytc \
   --chain-id zytherion \
-  --keyring-backend test \
-  --fees 200zytc \
+  --gas auto \
+  --gas-adjustment 1.5 \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
   -y
 ```
 
+### D. Memeriksa Status Transaksi (`q tx`)
+**Fungsi:** Melihat status eksekusi transaksi di dalam blok menggunakan TX Hash riil.
+```bash
+zytheriond q tx C6589111915CBBC6C1EF77559F734A1D75D327C8D27838671E5F2DE77555147C \
+  --node tcp://localhost:26657
+```
+
 ---
 
-### 2. TFHE Transaction (Submit Encrypted Ciphertext)
+## 2. Confidential Stablecoin ZYTD
 
-> [!WARNING]
-> If you specify the `--chain-id` flag, you must provide its value (`zytherion`). Leaving the flag empty at the end of the command will result in: `Error: flag needs an argument: --chain-id`. Alternatively, you can omit the flag entirely as it defaults to `"zytherion"`.
+Modul `x/stablecoin` mengelola mata uang stabil **ZYTD** (Zytherion Dollar) dengan opsi transaksi terenkripsi (**Confidential Transfer**) menggunakan skema TFHE (Fully Homomorphic Encryption).
 
-> [!IMPORTANT]
-> **v0.4 Quota rule:** Each address may submit at most **1 active TFHE commitment** at a time. A second `tfhe-submit` from the same address will return `ErrTFHEQuotaExceeded`. A `revoke-commitment` command will be available in v0.4.1 to release the quota slot.
-
-To submit a TFHE ciphertext file (`ct1.bin`):
+### A. Mint ZYTD (`tx stablecoin mint-zytd`)
+**Fungsi:** Mencetak `1,000 ZYTD` baru dengan menjaminkan `2,000 uzytc`.
 ```bash
-# Option A: With full chain-id flag (gas >= 500000 recommended; 1500 gas/KB in v0.4)
-zytheriond tx privacy tfhe-submit \
-  --ciphertext ct1.bin \
+zytheriond tx stablecoin mint-zytd 1000000000zytd uzytc 2000000000uzytc \
   --from alice \
   --chain-id zytherion \
-  --gas 600000 \
-  --keyring-backend test \
-  -y
-
-# Option B: Omit chain-id (uses default "zytherion")
-zytheriond tx privacy tfhe-submit \
-  --ciphertext ct1.bin \
-  --from alice \
-  --gas 600000 \
-  --keyring-backend test \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
   -y
 ```
 
----
-
-### 3. Homomorphic Addition Process Flow
-
-Homomorphic operations (such as `Add` or `Multiply`) are performed **automatically on the Validator Node (Go & Rust backend)** when processing transactions, not typed as interactive terminal commands by users.
-
-The life cycle is illustrated below:
-
-```
-[ Alice (Terminal) ] 
-       │
-       ├─► 1. Encrypt value 10 locally -> ct1.bin
-       ├─► 2. Encrypt value 20 locally -> ct2.bin
-       │
-       ├─► 3. Submit both files via CLI:
-       │      zytheriond tx privacy tfhe-submit --ciphertext ct1.bin ...
-       │      zytheriond tx privacy tfhe-submit --ciphertext ct2.bin ...
-       ▼
-[ Node Validator (State Machine) ]
-       │
-       ├─► 4. Receives ct1 and ct2.
-       ├─► 5. Automatically runs homomorphic addition in backend:
-       │      ctSum = tfhe.AddUint32(serverKey, ct1, ct2)
-       ├─► 6. Stores encrypted ctSum on-chain (without knowing the plaintext is 30).
-       ▼
-[ Alice (Terminal) ]
-       │
-       ├─► 7. Query the encrypted result using the commitment hash:
-       │      zytheriond query privacy commitment <alice_address>
-       │
-       └─► 8. Decrypt the retrieved result offline using Alice's private ClientKey.
-              Output: 30
-```
-
----
-
----
-
-### 4. Shard Integrity Verification (v0.4)
-
-Each shard received by a peer now carries a Merkle proof. The peer node verifies it automatically before storing:
-
-```
-Shard Server (POST /shard):
-  1. Receive JSON: { commitment_hex, index, data_hex, merkle_root_hex, merkle_proof_hex }
-  2. Decode shard data and Merkle proof.
-  3. Verify: VerifyProof(root, index, shardData, proof)  → 403 Forbidden on failure
-  4. Store shard to local disk on success.  → 201 Created
-```
-
-To query the on-chain Merkle root for a commitment:
+### B. Burn ZYTD (`tx stablecoin burn-zytd`)
+**Fungsi:** Membakar `500 ZYTD` untuk menarik kembali kolateral yang dijaminkan.
 ```bash
-zytheriond query privacy commitment <alice_address>
-# Shows commitment_hex and the new merkle_root field
+zytheriond tx stablecoin burn-zytd 500000000zytd \
+  --from alice \
+  --chain-id zytherion \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+### C. Confidential Transfer ZYTD (`tx stablecoin confidential-transfer`)
+**Fungsi:** Mentransfer ZYTD terenkripsi dari Alice ke Bob di mana publik hanya melihat string Hex terenkripsi tanpa mengetahui nominal transaksi.
+```bash
+zytheriond tx stablecoin confidential-transfer zyth19x06fdff9e04xdyknpzpugzwjklqu2q3uuu2cv \
+  02000000a4f891b2c5e3d710984aef01c385617a2b90efd4310a887c99e120f4b7a192837465019283f3e2d1c0b9a8f7e6d5c4b3a291807f6e5d4c3b2a1908 \
+  01000000bf7120a3c9e8d7f6e5d4c3b2a1908f7e6d5c4b3a291807f6e5d4c3b2a1908f7e6d5c4b3a291807f6e5d4c3b2a1908f7e6d5c4b3a291807f6e5d4c3b2 \
+  --from alice \
+  --chain-id zytherion \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
 ```
 
 ---
 
-## v0.5.1 Module Integrations
-The new modules added in v0.5 / v0.5.1 provide standard DeFi, contract utility, and ecosystem tooling:
-- **Price Oracle (`x/oracle`)**: Median TWAP feeds via validator consensus price submissions.
-- **IBC Collateral (`x/ibc-collateral`)**: ICS-20 middleware locking collateral tokens in a vault.
-- **Stablecoin (`x/stablecoin`)**: Pegged `ZYTD` stablecoin backed by locked IBC collateral.
-- **CosmWasm**: Permissioned contract uploading governed by on-chain authority.
+#### 💡 PENJELASAN DATA RIIL PARAMETER TERENKRIPSI
+
+1. **Ciphertext Base64 (`AAAA...base64...BBBB`)**:
+   * **Asal Data:** Dihasilkan secara lokal di perangkat pengguna menggunakan subcommand bawaan `zytheriond`:
+     ```bash
+     zytheriond keys tfhe encrypt 5000
+     ```
+     ⚠️ **Tidak perlu source code, tidak perlu tfhe-tool terpisah** — cukup binary `zytheriond` saja.
+   * **Fungsi:** Mengubah nominal angka `5,000 ZYTD` menjadi ciphertext Base64 terenkripsi TFHE FheUint32. Validator menambahkan ciphertext ini ke saldo penerima tanpa pernah tahu nilainya.
+
+2. **ZK-Proof Hex (`01000000bf7120a3...`)**:
+   * **Asal Data:** Dihasilkan secara lokal di perangkat Alice oleh generator Zero-Knowledge Range Proof (Bulletproofs) sebelum dikirim.
+   * **Fungsi:** Membuktikan secara sah ke validator bahwa:
+     - Nominal terenkripsi bernilai **Positif ($\ge 0$)** (mencegah manipulasi angka minus).
+     - Nominal terenkripsi **tidak melebihi total saldo ZYTD Alice**.
+     - *Validasi ini sah 100% tanpa membocorkan isi saldo Alice.*
 
 ---
 
-*Founder: **Rayhan Aziel Abbrar** | Version: 0.5.1 | 2026*
+### D. Memeriksa Saldo ZYTD Terenkripsi (`q stablecoin confidential-balance`)
+**Fungsi:** Membaca ciphertext saldo ZYTD terenkripsi milik Alice dari state blockchain.
+```bash
+zytheriond q stablecoin confidential-balance zyth1qfd89spzuajhdpwwhtu9k2rtetwcff2g2ncq8g \
+  --node tcp://localhost:26657
+```
+
+---
+
+## 3. Fitur Privasi & Penggunaan TFHE (Native Modul & Smart Contract)
+
+### 3.1. Penggunaan TFHE NATIVE (Tanpa Smart Contract)
+
+Metode ini menggunakan subcommand **bawaan `zytheriond`** langsung — cukup dengan binary `zytheriond`, tidak perlu source code, tidak perlu tool terpisah.
+
+> ⚠️ **PENTING:** Semua perintah TFHE di bawah ini menggunakan `zytheriond keys tfhe ...`.
+> Hanya butuh 1 binary: `zytheriond` yang sudah dikompilasi dengan TFHE static linked.
+
+#### A. Generate Kunci TFHE Pribadi (Satu Kali)
+**Fungsi:** Membuat `client.key` (rahasia, disimpan lokal) dan `server.key` (diunggah ke jaringan untuk komputasi terenkripsi). Wajib dilakukan sekali sebelum pakai TFHE.
+```bash
+zytheriond keys tfhe keygen
+```
+*Output:*
+```
+Keys generated and saved successfully!
+  Client Key (secret): /home/zhaohan/.zytherion/tfhe/client.key
+  Server Key (public): /home/zhaohan/.zytherion/tfhe/server.key
+```
+⚠️ **`client.key` adalah kunci rahasia — jangan pernah dibagikan ke siapapun!**
+
+#### B. Enkripsi Nominal Angka (Misalnya 5000)
+**Fungsi:** Mengubah angka `5000` menjadi Base64 ciphertext TFHE. Output inilah yang dikirim ke blockchain sebagai `ENCRYPTED_AMOUNT`.
+```bash
+zytheriond keys tfhe encrypt 5000
+# Atau dengan path client.key eksplisit:
+zytheriond keys tfhe encrypt 5000 ~/.zytherion/tfhe/client.key
+```
+*Output Base64 ciphertext (salin seluruh string ini):*
+```
+AgAAAKT4kbLF49cQmErvAcOFYXorlO/UMQqIfJnhIPSn...
+```
+
+#### C. Mendaftarkan ServerKey TFHE ke Blockchain (`tx privacy register-server-key`)
+**Fungsi:** Mempublikasikan `server.key` ke state `x/privacy` agar validator dapat melakukan penjumlahan/perkalian terenkripsi atas nama akun pengguna.
+```bash
+# Ambil isi server.key dalam format Base64 dulu:
+base64 ~/.zytherion/tfhe/server.key
+
+# Lalu daftarkan:
+zytheriond tx privacy register-server-key $(base64 ~/.zytherion/tfhe/server.key) \
+  --from alice \
+  --chain-id zytherion \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+#### D. Kirim Transfer Terenkripsi (`tx privacy confidential-send`)
+**Fungsi:** Transfer koin terenkripsi langsung via modul `x/privacy`. Publik hanya melihat Base64 acak, tidak tahu nominalnya.
+```bash
+# Step 1: Encrypt dulu nominalnya
+ENCRYPTED=$(zytheriond keys tfhe encrypt 5000)
+
+# Step 2: Kirim transaksi
+zytheriond tx privacy confidential-send \
+  zyth19x06fdff9e04xdyknpzpugzwjklqu2q3uuu2cv \
+  "$ENCRYPTED" \
+  --from alice \
+  --chain-id zytherion \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+#### E. Penjumlahan Homomorfik On-Chain ($C_3 = C_1 + C_2$) (`tx privacy execute-homomorphic-add`)
+**Fungsi:** Meminta validator menjumlahkan dua ciphertext di blockchain tanpa mendekripsi nilainya. Validator hanya tahu hasilnya adalah $C_3$ tanpa tahu nilai $C_1$ atau $C_2$.
+```bash
+CT1=$(zytheriond keys tfhe encrypt 1000)
+CT2=$(zytheriond keys tfhe encrypt 4000)
+
+zytheriond tx privacy execute-homomorphic-add \
+  "$CT1" \
+  "$CT2" \
+  --from alice \
+  --chain-id zytherion \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+#### F. Dekripsi Ciphertext Hasil dari Blockchain
+**Fungsi:** Mengunduh ciphertext dari blockchain lalu mendekripsinya secara lokal menggunakan `client.key` milik sendiri. Hanya pemilik `client.key` yang bisa melihat angka aslinya.
+```bash
+# Query ciphertext saldo dari chain
+CT_RESULT=$(zytheriond q privacy confidential-balance zyth1qfd89spzuajhdpwwhtu9k2rtetwcff2g2ncq8g \
+  --node tcp://localhost:26657 --output json | jq -r '.ciphertext')
+
+# Decrypt secara lokal
+zytheriond keys tfhe decrypt "$CT_RESULT"
+# Atau dengan path client.key eksplisit:
+zytheriond keys tfhe decrypt "$CT_RESULT" ~/.zytherion/tfhe/client.key
+```
+*Output:*
+```
+Decrypted value: 5000
+```
+*(Hanya pemilik `client.key` yang bisa melihat angka 5000 ini)*
+
+---
+
+### 3.2. Homomorphic Smart Contract (CosmWasm × TFHE)
+
+Smart Contract berbasis Rust/CosmWasm di Zytherion mengeksekusi komputasi homomorfik di dalam VM WASM via TFHE Custom Querier plugin.
+
+#### A. Mengunggah Kode WASM (`tx wasm store`)
+```bash
+zytheriond tx wasm store contracts/homomorphic_vault.wasm \
+  --from alice \
+  --chain-id zytherion \
+  --gas auto \
+  --gas-adjustment 1.5 \
+  --fees 10000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+#### B. Inisialisasi Smart Contract (`tx wasm instantiate`)
+```bash
+zytheriond tx wasm instantiate 1 '{"owner":"zyth1qfd89spzuajhdpwwhtu9k2rtetwcff2g2ncq8g"}' \
+  --label "TFHE Vault" \
+  --no-admin \
+  --from alice \
+  --chain-id zytherion \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+#### C. Deposito Terenkripsi ke Contract (`tx wasm execute`)
+```bash
+zytheriond tx wasm execute zyth14hj2tavq8fpesw2wpp4w2z0p5tw2c8ph6h6khn \
+  '{"deposit_encrypted":{"ciphertext":"02000000a4f891b2c5e3d710984aef01c385617a2b90efd4310a887c99e120f4b7a192837465019283f3e2d1c0b9a8f7e6d5c4b3a291807f6e5d4c3b2a1908"}}' \
+  --from alice \
+  --chain-id zytherion \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+#### D. Memeriksa State Contract Terenkripsi (`q wasm contract-state smart`)
+```bash
+zytheriond q wasm contract-state smart zyth14hj2tavq8fpesw2wpp4w2z0p5tw2c8ph6h6khn \
+  '{"get_encrypted_balance":{"user":"zyth1qfd89spzuajhdpwwhtu9k2rtetwcff2g2ncq8g"}}' \
+  --node tcp://localhost:26657
+```
+
+---
+
+## 4. IBC Collateral & Price Oracle
+
+### A. Memeriksa Harga Oracle & TWAP (`q oracle price` / `twap`)
+```bash
+# Harga Terkini ZYTC
+zytheriond q oracle price ZYTC --node tcp://localhost:26657
+
+# TWAP (Time-Weighted Average Price) ZYTC
+zytheriond q oracle twap ZYTC --node tcp://localhost:26657
+```
+
+### B. Mengunci Kolateral IBC (`tx ibccollateral lock-collateral`)
+```bash
+zytheriond tx ibccollateral lock-collateral ibc/ATOM 50000000 \
+  --from alice \
+  --chain-id zytherion \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+---
+
+## 5. Staking & Voting Power
+
+### A. Mengirim Delegasi Tambahan ke Laptop (`tx staking delegate`)
+Meningkatkan voting power Laptop (`zythvaloper1qkacpnrz...`) menjadi ~68.7% agar dapat memproduksi blok secara mandiri saat PC offline.
+```bash
+zytheriond tx staking delegate zythvaloper1qkacpnrzqmejfprfpepjky800aheddmsdchlf5 60000000000000zytc \
+  --from alice \
+  --chain-id zytherion \
+  --gas auto \
+  --gas-adjustment 1.5 \
+  --fees 5000zytc \
+  --broadcast-mode sync \
+  --node tcp://localhost:26657 \
+  -y
+```
+
+### B. Memeriksa Seluruh Voting Power Validator (`q tendermint-validator-set`)
+```bash
+zytheriond q tendermint-validator-set --node tcp://localhost:26657
+```

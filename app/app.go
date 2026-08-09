@@ -137,6 +137,8 @@ import (
 
 	appparams "zytherion/app/params"
 	"zytherion/app/greenbft"
+	"zytherion/crypto/dilithium5"
+	txsigning "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"zytherion/docs"
 )
 
@@ -569,9 +571,12 @@ func New(
 
 	// ── Privacy Module (TFHE always-on in v0.5.3+) ───────────────────────────
 	// TFHE subsystem initialises unconditionally — no --enable-tfhe flag required.
-	nodeID := cast.ToString(appOpts.Get("node-id"))
+	nodeID := cast.ToString(appOpts.Get("moniker"))
 	if nodeID == "" {
-		nodeID = "local-node" // fallback for single-node devnet
+		nodeID = cast.ToString(appOpts.Get("node-id"))
+		if nodeID == "" {
+			nodeID = "local-node" // fallback for single-node devnet
+		}
 	}
 
 	app.PrivacyKeeper = *privacymodulekeeper.NewKeeper(
@@ -583,6 +588,7 @@ func New(
 		homePath,
 		nodeID,
 	)
+	app.PrivacyKeeper.SetStakingKeeper(app.StakingKeeper)
 	privacyModule := privacymodule.NewAppModule(appCodec, app.PrivacyKeeper, app.AccountKeeper, app.BankKeeper)
 
 	// ── Crypto subsystem startup self-test ────────────────────────────────────
@@ -872,7 +878,7 @@ func New(
 			BankKeeper:      app.BankKeeper,
 			SignModeHandler: encodingConfig.TxConfig.SignModeHandler(),
 			FeegrantKeeper:  app.FeeGrantKeeper,
-			SigGasConsumer:  ante.DefaultSigVerificationGasConsumer,
+			SigGasConsumer:  ZytherionSigVerificationGasConsumer,
 		},
 	)
 	if err != nil {
@@ -920,6 +926,22 @@ func New(
 
 	return app
 }
+
+// ZytherionSigVerificationGasConsumer handles gas consumption for signature verification,
+// including Post-Quantum Dilithium5 keys as well as standard Cosmos SDK key types.
+func ZytherionSigVerificationGasConsumer(
+	meter sdk.GasMeter, sig txsigning.SignatureV2, params authtypes.Params,
+) error {
+	switch sig.PubKey.(type) {
+	case *dilithium5.PubKey:
+		// Dilithium5 signature verification gas cost (~4x ED25519)
+		meter.ConsumeGas(params.SigVerifyCostED25519*4, "ante verify: dilithium5")
+		return nil
+	default:
+		return ante.DefaultSigVerificationGasConsumer(meter, sig, params)
+	}
+}
+
 
 // DeliverTx overrides BaseApp's DeliverTx to intercept the PoVL sentinel transaction.
 // Because the sentinel is a raw byte array and not a valid protobuf transaction,
@@ -1089,6 +1111,12 @@ func (app *App) InitChainer(ctx sdk.Context, req abci.RequestInitChain) abci.Res
 	var genesisState GenesisState
 	if err := json.Unmarshal(req.AppStateBytes, &genesisState); err != nil {
 		panic(err)
+	}
+	if req.ConsensusParams != nil {
+		if req.ConsensusParams.Validator != nil {
+			req.ConsensusParams.Validator.PubKeyTypes = []string{"ed25519", "dilithium5"}
+		}
+		app.ConsensusParamsKeeper.Set(ctx, req.ConsensusParams)
 	}
 	app.UpgradeKeeper.SetModuleVersionMap(ctx, app.mm.GetVersionMap())
 	return app.mm.InitGenesis(ctx, app.appCodec, genesisState)

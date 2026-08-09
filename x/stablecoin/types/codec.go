@@ -3,11 +3,13 @@ package types
 import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/msgservice"
 )
 
 var (
 	Amino     = codec.NewLegacyAmino()
-	ModuleCdc = codec.NewAminoCodec(Amino)
+	ModuleCdc = codec.NewProtoCodec(codectypes.NewInterfaceRegistry())
 )
 
 func init() {
@@ -21,16 +23,14 @@ func RegisterCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgRegisterZYTDKey{}, "stablecoin/RegisterZYTDKey", nil)
 }
 
-// RegisterInterfaces is a no-op for stablecoin — messages are Amino-routed only.
-// RegisterImplementations requires v2 proto-generated types; our manual structs
-// do NOT have a protoreflect descriptor, so calling it would panic at startup.
-func RegisterInterfaces(_ codectypes.InterfaceRegistry) {}
-
-// msgServerKey is used for server registration (compatible with amino-based msg routing).
-type msgServerRegistrar interface {
-	RegisterMsgServer(srv MsgServer)
+// RegisterInterfaces registers the stablecoin module message types with the interface registry.
+func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
+	registry.RegisterImplementations(
+		(*sdk.Msg)(nil),
+		&MsgMintZYTD{},
+		&MsgBurnZYTD{},
+		&MsgLiquidate{},
+		&MsgRegisterZYTDKey{},
+	)
+	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)
 }
-
-// RegisterMsgServer is a no-op stub for amino-based message routing compatibility.
-// In a protobuf-first setup, this would register via the module configurator.
-func RegisterMsgServer(_ interface{}, _ MsgServer) {}

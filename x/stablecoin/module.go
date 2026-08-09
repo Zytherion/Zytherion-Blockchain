@@ -93,9 +93,9 @@ func NewAppModule(cdc codec.Codec, k keeper.Keeper) AppModule {
 func (am AppModule) Name() string { return types.ModuleName }
 
 // RegisterServices registers module services.
-// Note: In a full protobuf setup, RegisterMsgServer and RegisterQueryServer would be called here.
-// For amino-based messages, we register via the configurator's handler.
-func (am AppModule) RegisterServices(_ module.Configurator) {}
+func (am AppModule) RegisterServices(cfg module.Configurator) {
+	types.RegisterMsgServer(cfg.MsgServer(), keeper.NewMsgServerImpl(am.keeper))
+}
 
 // InitGenesis initializes the module from genesis state JSON.
 func (am AppModule) InitGenesis(ctx sdk.Context, _ codec.JSONCodec, gs json.RawMessage) []abci.ValidatorUpdate {

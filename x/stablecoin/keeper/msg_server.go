@@ -119,21 +119,21 @@ func (s mintMsgServer) MintZYTD(goCtx context.Context, req *types.MsgMintZYTD) (
 	}
 
 	// ═ PQC signature verification + Phase 3 hard freeze check. ═
-	if err := s.verifyZYTDPQCSig(ctx, sender, req.IBCDenom, req.ExpirationBlockHeight, req.Dilithium5PubKey, req.Dilithium5Sig); err != nil {
+	if err := s.verifyZYTDPQCSig(ctx, sender, req.IbcDenom, req.ExpirationBlockHeight, req.Dilithium5PubKey, req.Dilithium5Sig); err != nil {
 		return nil, err
 	}
 
 	// Step 1: Get and validate collateral asset
-	asset, err := s.ibcCollateralKeeper.GetCollateralAsset(ctx, req.IBCDenom)
+	asset, err := s.ibcCollateralKeeper.GetCollateralAsset(ctx, req.IbcDenom)
 	if err != nil {
 		return nil, fmt.Errorf("collateral asset not found: %w", err)
 	}
 	if !asset.IsActive {
-		return nil, fmt.Errorf("collateral asset %s is not active", req.IBCDenom)
+		return nil, fmt.Errorf("collateral asset %s is not active", req.IbcDenom)
 	}
 
 	// Step 2: Get TWAP price
-	twap, err := s.oracleKeeper.GetTWAP(ctx, req.IBCDenom)
+	twap, err := s.oracleKeeper.GetTWAP(ctx, req.IbcDenom)
 	if err != nil {
 		return nil, types.ErrOraclePriceUnavailable
 	}
@@ -145,17 +145,17 @@ func (s mintMsgServer) MintZYTD(goCtx context.Context, req *types.MsgMintZYTD) (
 	maxMintable := collateralUSD.Quo(asset.MinRatio).TruncateInt()
 
 	// Step 5: Check requested amount is within limits
-	if req.RequestedZYTD.GT(maxMintable) {
+	if req.RequestedZytd.GT(maxMintable) {
 		return nil, types.ErrExceedsCollateralValue
 	}
 
 	// Step 6: Lock collateral
-	if err := s.ibcCollateralKeeper.LockCollateral(ctx, sender, req.IBCDenom, req.CollateralAmount); err != nil {
+	if err := s.ibcCollateralKeeper.LockCollateral(ctx, sender, req.IbcDenom, req.CollateralAmount); err != nil {
 		return nil, fmt.Errorf("lock collateral: %w", err)
 	}
 
 	// Step 7: Mint ZYTD coins to module account
-	mintCoins := sdk.NewCoins(sdk.NewCoin(types.ZYTDDenom, req.RequestedZYTD))
+	mintCoins := sdk.NewCoins(sdk.NewCoin(types.ZYTDDenom, req.RequestedZytd))
 	if err := s.bankKeeper.MintCoins(ctx, types.ModuleAccountName, mintCoins); err != nil {
 		return nil, fmt.Errorf("mint ZYTD: %w", err)
 	}
@@ -166,22 +166,22 @@ func (s mintMsgServer) MintZYTD(goCtx context.Context, req *types.MsgMintZYTD) (
 	}
 
 	// Step 9a: Update MintedZYTD in position
-	if err := s.ibcCollateralKeeper.UpdateMintedZYTD(ctx, sender, req.IBCDenom, req.RequestedZYTD); err != nil {
+	if err := s.ibcCollateralKeeper.UpdateMintedZYTD(ctx, sender, req.IbcDenom, req.RequestedZytd); err != nil {
 		return nil, fmt.Errorf("update minted ZYTD: %w", err)
 	}
 
 	// Step 9b: Store MintRecord
 	record := types.MintRecord{
 		Owner:         req.Sender,
-		IBCDenom:      req.IBCDenom,
-		Minted:        req.RequestedZYTD,
+		IBCDenom:      req.IbcDenom,
+		Minted:        req.RequestedZytd,
 		CollateralUSD: collateralUSD,
 		MintedAt:      ctx.BlockHeight(),
 	}
 	// Check if there's an existing record to accumulate
-	existing, err := s.GetMintRecord(ctx, sender, req.IBCDenom)
+	existing, err := s.GetMintRecord(ctx, sender, req.IbcDenom)
 	if err == nil {
-		record.Minted = existing.Minted.Add(req.RequestedZYTD)
+		record.Minted = existing.Minted.Add(req.RequestedZytd)
 		record.CollateralUSD = existing.CollateralUSD.Add(collateralUSD)
 		record.MintedAt = existing.MintedAt // preserve original mint height
 	}
@@ -189,20 +189,21 @@ func (s mintMsgServer) MintZYTD(goCtx context.Context, req *types.MsgMintZYTD) (
 
 	// Update total supply
 	supply := s.GetTotalSupply(ctx)
-	s.SetTotalSupply(ctx, supply.Add(req.RequestedZYTD))
+	s.SetTotalSupply(ctx, supply.Add(req.RequestedZytd))
 
 	// Step 10: Emit event
-	collateralRatio := collateralUSD.Quo(sdk.NewDecFromInt(req.RequestedZYTD))
+	collateralRatio := collateralUSD.Quo(sdk.NewDecFromInt(req.RequestedZytd))
 	ctx.EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeMintZYTD,
 		sdk.NewAttribute(types.AttributeKeyOwner, req.Sender),
-		sdk.NewAttribute(types.AttributeKeyIBCDenom, req.IBCDenom),
+		sdk.NewAttribute(types.AttributeKeyIBCDenom, req.IbcDenom),
 		sdk.NewAttribute(types.AttributeKeyCollateralAmount, req.CollateralAmount.String()),
-		sdk.NewAttribute(types.AttributeKeyZYTDAmount, req.RequestedZYTD.String()),
+		sdk.NewAttribute(types.AttributeKeyZYTDAmount, req.RequestedZytd.String()),
 		sdk.NewAttribute(types.AttributeKeyCollateralRatio, collateralRatio.String()),
 	))
 
-	return &types.MsgMintZYTDResponse{MintedAmount: req.RequestedZYTD}, nil
+	return &types.MsgMintZYTDResponse{MintedAmount: req.RequestedZytd}, nil
+
 }
 
 // BurnZYTD handles MsgBurnZYTD: burn ZYTD and unlock proportional collateral.
@@ -226,23 +227,23 @@ func (s mintMsgServer) BurnZYTD(goCtx context.Context, req *types.MsgBurnZYTD) (
 
 	// ═ PQC signature verification + Phase 3 hard freeze check. ═
 	// Burn is allowed in all phases but Phase 3 requires a valid sig.
-	if err := s.verifyZYTDPQCSig(ctx, sender, req.IBCDenom, req.ExpirationBlockHeight, req.Dilithium5PubKey, req.Dilithium5Sig); err != nil {
+	if err := s.verifyZYTDPQCSig(ctx, sender, req.IbcDenom, req.ExpirationBlockHeight, req.Dilithium5PubKey, req.Dilithium5Sig); err != nil {
 		return nil, err
 	}
 
 	// Step 1: Get MintRecord
-	record, err := s.GetMintRecord(ctx, sender, req.IBCDenom)
+	record, err := s.GetMintRecord(ctx, sender, req.IbcDenom)
 	if err != nil {
 		return nil, types.ErrMintRecordNotFound
 	}
 
 	// Step 2: Validate burn amount
-	if req.ZYTDAmount.GT(record.Minted) {
+	if req.ZytdAmount.GT(record.Minted) {
 		return nil, types.ErrExceedsMintedAmount
 	}
 
 	// Step 3: Send ZYTD from sender to module and burn
-	burnCoins := sdk.NewCoins(sdk.NewCoin(types.ZYTDDenom, req.ZYTDAmount))
+	burnCoins := sdk.NewCoins(sdk.NewCoin(types.ZYTDDenom, req.ZytdAmount))
 	if err := s.bankKeeper.SendCoinsFromAccountToModule(ctx, sender, types.ModuleAccountName, burnCoins); err != nil {
 		return nil, fmt.Errorf("send ZYTD to module: %w", err)
 	}
@@ -252,28 +253,28 @@ func (s mintMsgServer) BurnZYTD(goCtx context.Context, req *types.MsgBurnZYTD) (
 
 	// Step 4: Calculate proportional collateral to return
 	// returnAmount = (zytdAmount / MintRecord.Minted) * lockedCollateral
-	position, err := s.ibcCollateralKeeper.GetPosition(ctx, sender, req.IBCDenom)
+	position, err := s.ibcCollateralKeeper.GetPosition(ctx, sender, req.IbcDenom)
 	if err != nil {
 		return nil, fmt.Errorf("get collateral position: %w", err)
 	}
-	burnRatio := sdk.NewDecFromInt(req.ZYTDAmount).Quo(sdk.NewDecFromInt(record.Minted))
+	burnRatio := sdk.NewDecFromInt(req.ZytdAmount).Quo(sdk.NewDecFromInt(record.Minted))
 	returnAmount := burnRatio.MulInt(position.Amount).TruncateInt()
 
 	// Step 5: Unlock proportional collateral
-	if err := s.ibcCollateralKeeper.UnlockCollateral(ctx, sender, req.IBCDenom, returnAmount); err != nil {
+	if err := s.ibcCollateralKeeper.UnlockCollateral(ctx, sender, req.IbcDenom, returnAmount); err != nil {
 		return nil, fmt.Errorf("unlock collateral: %w", err)
 	}
 
 	// Step 6: Update MintedZYTD in position (negative delta)
-	negDelta := req.ZYTDAmount.Neg()
-	if err := s.ibcCollateralKeeper.UpdateMintedZYTD(ctx, sender, req.IBCDenom, negDelta); err != nil {
+	negDelta := req.ZytdAmount.Neg()
+	if err := s.ibcCollateralKeeper.UpdateMintedZYTD(ctx, sender, req.IbcDenom, negDelta); err != nil {
 		return nil, fmt.Errorf("update minted ZYTD: %w", err)
 	}
 
 	// Step 7: Update or delete MintRecord
-	newMinted := record.Minted.Sub(req.ZYTDAmount)
+	newMinted := record.Minted.Sub(req.ZytdAmount)
 	if newMinted.IsZero() {
-		s.DeleteMintRecord(ctx, sender, req.IBCDenom)
+		s.DeleteMintRecord(ctx, sender, req.IbcDenom)
 	} else {
 		record.Minted = newMinted
 		record.CollateralUSD = record.CollateralUSD.Mul(sdk.OneDec().Sub(burnRatio))
@@ -282,7 +283,7 @@ func (s mintMsgServer) BurnZYTD(goCtx context.Context, req *types.MsgBurnZYTD) (
 
 	// Step 8: Update TotalSupply
 	supply := s.GetTotalSupply(ctx)
-	newSupply := supply.Sub(req.ZYTDAmount)
+	newSupply := supply.Sub(req.ZytdAmount)
 	if newSupply.IsNegative() {
 		newSupply = sdk.ZeroInt()
 	}
@@ -292,8 +293,8 @@ func (s mintMsgServer) BurnZYTD(goCtx context.Context, req *types.MsgBurnZYTD) (
 	ctx.EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeBurnZYTD,
 		sdk.NewAttribute(types.AttributeKeyOwner, req.Sender),
-		sdk.NewAttribute(types.AttributeKeyIBCDenom, req.IBCDenom),
-		sdk.NewAttribute(types.AttributeKeyZYTDAmount, req.ZYTDAmount.String()),
+		sdk.NewAttribute(types.AttributeKeyIBCDenom, req.IbcDenom),
+		sdk.NewAttribute(types.AttributeKeyZYTDAmount, req.ZytdAmount.String()),
 		sdk.NewAttribute(types.AttributeKeyCollateralAmount, returnAmount.String()),
 	))
 
@@ -325,24 +326,24 @@ func (s mintMsgServer) Liquidate(goCtx context.Context, req *types.MsgLiquidate)
 
 	// ═ PQC signature verification + Phase 3 hard freeze check for liquidator. ═
 	// Liquidations allowed in all phases but Phase 3 requires valid sig from liquidator.
-	if err := s.verifyZYTDPQCSig(ctx, liquidator, req.IBCDenom, req.ExpirationBlockHeight, req.Dilithium5PubKey, req.Dilithium5Sig); err != nil {
+	if err := s.verifyZYTDPQCSig(ctx, liquidator, req.IbcDenom, req.ExpirationBlockHeight, req.Dilithium5PubKey, req.Dilithium5Sig); err != nil {
 		return nil, err
 	}
 
 	// Step 1: Get target's collateral position
-	position, err := s.ibcCollateralKeeper.GetPosition(ctx, targetOwner, req.IBCDenom)
+	position, err := s.ibcCollateralKeeper.GetPosition(ctx, targetOwner, req.IbcDenom)
 	if err != nil {
 		return nil, fmt.Errorf("get target position: %w", err)
 	}
 
 	// Get collateral asset for thresholds
-	asset, err := s.ibcCollateralKeeper.GetCollateralAsset(ctx, req.IBCDenom)
+	asset, err := s.ibcCollateralKeeper.GetCollateralAsset(ctx, req.IbcDenom)
 	if err != nil {
 		return nil, fmt.Errorf("get collateral asset: %w", err)
 	}
 
 	// Step 2: Get TWAP price
-	twap, err := s.oracleKeeper.GetTWAP(ctx, req.IBCDenom)
+	twap, err := s.oracleKeeper.GetTWAP(ctx, req.IbcDenom)
 	if err != nil {
 		return nil, types.ErrOraclePriceUnavailable
 	}
@@ -388,13 +389,13 @@ func (s mintMsgServer) Liquidate(goCtx context.Context, req *types.MsgLiquidate)
 	}
 
 	// Step 7: Unlock collateral to seize and distribute
-	if err := s.ibcCollateralKeeper.UnlockCollateral(ctx, targetOwner, req.IBCDenom, collateralToSeize); err != nil {
+	if err := s.ibcCollateralKeeper.UnlockCollateral(ctx, targetOwner, req.IbcDenom, collateralToSeize); err != nil {
 		return nil, fmt.Errorf("unlock seized collateral: %w", err)
 	}
 
 	// Transfer liquidator reward from module to liquidator
 	if liquidatorReward.IsPositive() {
-		rewardCoins := sdk.NewCoins(sdk.NewCoin(req.IBCDenom, liquidatorReward))
+		rewardCoins := sdk.NewCoins(sdk.NewCoin(req.IbcDenom, liquidatorReward))
 		_ = s.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleAccountName, liquidator, rewardCoins)
 	}
 
@@ -402,17 +403,17 @@ func (s mintMsgServer) Liquidate(goCtx context.Context, req *types.MsgLiquidate)
 	if protocolFee.IsPositive() {
 		feeReceiver, err := sdk.AccAddressFromBech32(params.ProtocolFeeReceiver)
 		if err == nil {
-			feeCoins := sdk.NewCoins(sdk.NewCoin(req.IBCDenom, protocolFee))
+			feeCoins := sdk.NewCoins(sdk.NewCoin(req.IbcDenom, protocolFee))
 			_ = s.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleAccountName, feeReceiver, feeCoins)
 		}
 	}
 
 	// Step 8: Close position — zero out MintedZYTD
 	negDebt := debtZYTD.Neg()
-	if err := s.ibcCollateralKeeper.UpdateMintedZYTD(ctx, targetOwner, req.IBCDenom, negDebt); err != nil {
+	if err := s.ibcCollateralKeeper.UpdateMintedZYTD(ctx, targetOwner, req.IbcDenom, negDebt); err != nil {
 		return nil, fmt.Errorf("close liquidated position: %w", err)
 	}
-	s.DeleteMintRecord(ctx, targetOwner, req.IBCDenom)
+	s.DeleteMintRecord(ctx, targetOwner, req.IbcDenom)
 
 	// Update total supply
 	supply := s.GetTotalSupply(ctx)
@@ -427,7 +428,7 @@ func (s mintMsgServer) Liquidate(goCtx context.Context, req *types.MsgLiquidate)
 		types.EventTypeLiquidation,
 		sdk.NewAttribute(types.AttributeKeyLiquidator, req.Liquidator),
 		sdk.NewAttribute(types.AttributeKeyTarget, req.TargetOwner),
-		sdk.NewAttribute(types.AttributeKeyIBCDenom, req.IBCDenom),
+		sdk.NewAttribute(types.AttributeKeyIBCDenom, req.IbcDenom),
 		sdk.NewAttribute(types.AttributeKeyZYTDAmount, debtZYTD.String()),
 		sdk.NewAttribute(types.AttributeKeyCollateralAmount, collateralToSeize.String()),
 	))

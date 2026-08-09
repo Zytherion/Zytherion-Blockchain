@@ -40,10 +40,11 @@ func CmdMintZYTD() *cobra.Command {
 
 Example:
   zytheriond tx stablecoin mint-zytd \
-    --collateral-denom ibc/AXLUSDC_CHANNEL_HASH \
-    --collateral-amount 1000000 \
-    --zytd-amount 900000 \
-    --from alice --gas 300000 --chain-id zytherion -y`,
+    --collateral-denom uzytc \
+    --collateral-amount 2000000000 \
+    --zytd-amount 1000000000 \
+    --expiration-block-height 100 \
+    --from alice --fees 5000zytc --chain-id zytherion -y`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
 			if err != nil {
@@ -53,9 +54,13 @@ Example:
 			collateralDenom, _ := cmd.Flags().GetString("collateral-denom")
 			collateralAmountStr, _ := cmd.Flags().GetString("collateral-amount")
 			zytdAmountStr, _ := cmd.Flags().GetString("zytd-amount")
+			expirationBlockHeight, _ := cmd.Flags().GetInt64("expiration-block-height")
 
 			if collateralDenom == "" {
 				return fmt.Errorf("--collateral-denom is required")
+			}
+			if expirationBlockHeight <= 0 {
+				return fmt.Errorf("--expiration-block-height must be a positive block number (e.g. current height + 100)")
 			}
 
 			collateralAmount, ok := sdk.NewIntFromString(collateralAmountStr)
@@ -74,6 +79,7 @@ Example:
 				collateralAmount,
 				zytdAmount,
 			)
+			msg.ExpirationBlockHeight = expirationBlockHeight
 
 			if err := msg.ValidateBasic(); err != nil {
 				return err
@@ -83,13 +89,15 @@ Example:
 		},
 	}
 
-	cmd.Flags().String("collateral-denom", "", "IBC denom of collateral asset")
+	cmd.Flags().String("collateral-denom", "", "IBC denom of collateral asset (e.g. uzytc)")
 	cmd.Flags().String("collateral-amount", "0", "Amount of collateral to lock (in base units)")
 	cmd.Flags().String("zytd-amount", "0", "Amount of ZYTD to mint (in uzytd)")
+	cmd.Flags().Int64("expiration-block-height", 0, "Block height at which this mint tx expires — use current height + 100 (replay protection)")
 	flags.AddTxFlagsToCmd(cmd)
 
 	return cmd
 }
+
 
 // CmdBurnZYTD creates the burn-zytd CLI command.
 func CmdBurnZYTD() *cobra.Command {

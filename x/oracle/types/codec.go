@@ -4,6 +4,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/msgservice"
 )
 
 var (
@@ -21,7 +22,11 @@ func RegisterCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgSubmitPrice{}, "oracle/SubmitPrice", nil)
 }
 
-// RegisterInterfaces is a no-op for oracle — messages are Amino-routed only.
-// RegisterImplementations requires v2 proto-generated types; our manual structs
-// do NOT have a protoreflect descriptor, so calling it would panic at startup.
-func RegisterInterfaces(_ cdctypes.InterfaceRegistry) {}
+// RegisterInterfaces registers oracle message types with the interface registry.
+func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+	registry.RegisterImplementations(
+		(*sdk.Msg)(nil),
+		&MsgSubmitPrice{},
+	)
+	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)
+}

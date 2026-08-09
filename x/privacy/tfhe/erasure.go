@@ -45,8 +45,9 @@ const (
 
 	// CiphertextMaxBytes is the maximum allowed TFHE FheUint32 ciphertext size.
 	// Also used as the pre-allocation buffer size for Rust FFI calls.
-	// Actual ciphertext size is ~16-21 KB; 32 KB provides safe headroom.
-	CiphertextMaxBytes = 32 * 1024
+	// tfhe-rs 0.6 with default params serialises FheUint32 to ~200-400 KB;
+	// 512 KB provides safe headroom for all parameter variations.
+	CiphertextMaxBytes = 512 * 1024
 )
 
 // newEncoder returns a cached Reed-Solomon encoder.

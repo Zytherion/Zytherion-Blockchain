@@ -1,0 +1,39 @@
+syntax = "proto3";
+package zytherion.ibccollateral;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "zytherion/x/ibc-collateral/types";
+
+// Msg defines the Msg service for x/ibc-collateral.
+service Msg {
+  rpc LockCollateral(MsgLockCollateral) returns (MsgLockCollateralResponse);
+  rpc UnlockCollateral(MsgUnlockCollateral) returns (MsgUnlockCollateralResponse);
+}
+
+// MsgLockCollateral locks IBC collateral into the vault.
+message MsgLockCollateral {
+  string owner     = 1;
+  string ibc_denom = 2;
+  string amount    = 3 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+}
+
+message MsgLockCollateralResponse {
+  string owner     = 1;
+  string ibc_denom = 2;
+  string locked    = 3 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+}
+
+// MsgUnlockCollateral releases previously locked collateral back to the owner.
+message MsgUnlockCollateral {
+  string owner     = 1;
+  string ibc_denom = 2;
+  string amount    = 3 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+}
+
+message MsgUnlockCollateralResponse {
+  string owner     = 1;
+  string ibc_denom = 2;
+  string unlocked  = 3 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+  string remaining = 4 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int", (gogoproto.nullable) = false];
+}

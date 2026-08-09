@@ -1,9 +1,9 @@
 # Zytherion Blockchain and Cryptocurrency — Full Technical Summary
 
-**Version:** 0.6.0 | **Token:** ZYTC | **Chain ID:** `zytherion`  
+**Version:** 0.7.0 | **Token:** ZYTC | **Chain ID:** `zytherion`  
 **Founder:** Rayhan Aziel Abbrar  
 **Repository:** https://github.com/Zytherion/Zytherion-Blockchain  
-**Stack:** Cosmos SDK v0.47 · CometBFT v0.37 (QuantumBFT) · Go · Rust (TFHE via CGo)
+**Stack:** Cosmos SDK v0.47 · CometBFT v0.37 (QuantumBFT) · Go · Rust (TFHE via CGo) · circl (Dilithium5 & Kyber1024)
 
 ---
 
@@ -11,7 +11,7 @@
 
 **Zytherion** adalah Layer-1 blockchain generasi berikutnya yang dibangun di atas Cosmos SDK dan CometBFT, menggabungkan kriptografi post-quantum, enkripsi homomorfik penuh (FHE), stablecoin multi-kolateral, dan smart contract dalam satu arsitektur terintegrasi.
 
-Proyek ini dimulai sebagai eksplorasi kriptografi terapan dan berkembang menjadi protokol blockchain lengkap dengan tujuh fase evolusi:
+Proyek ini dimulai sebagai eksplorasi kriptografi terapan dan berkembang menjadi protokol blockchain lengkap dengan delapan fase evolusi:
 - **v0.1–v0.2**: Fondasi post-quantum (LWR hashing, PoVL VDF, Dilithium)
 - **v0.3**: Homomorphic encryption + Erasure Coding (penggantian ZK-SNARK)
 - **v0.4**: Pengerasan shard storage (Merkle integrity, auth P2P, quota)
@@ -20,10 +20,33 @@ Proyek ini dimulai sebagai eksplorasi kriptografi terapan dan berkembang menjadi
 - **v0.5.2**: Security patch — dua kerentanan kritis dipatch sebelum mainnet
 - **v0.5.3**: TFHE Always-On + API Status Endpoint
 - **v0.6**: QuantumBFT — Post-quantum consensus signing (Dilithium5) menggantikan Ed25519 CometBFT
+- **v0.7**: Quantum-Only Mandate & CRYSTALS-Kyber (ML-KEM-1024) — Hybrid Kyber1024+X25519 P2P KEM, default key-type Dilithium5 CLI, 512KB TFHE buffer
 
 ---
 
 ## Full Version Changelog
+
+### v0.7 — Quantum-Only Mandate & CRYSTALS-Kyber (ML-KEM-1024) (2026)
+
+**Mengintegrasikan Key Encapsulation Mechanism (KEM) Post-Quantum NIST FIPS 203 & Menetapkan Mandat Quantum-Only.**
+
+| Perubahan | Status | Detail |
+|---|---|---|
+| CRYSTALS-Kyber1024 (`crypto/kyber1024`) | 🆕 **NEW** | KEM Post-Quantum NIST Level 5 (~256-bit PQ) untuk enkripsi data & key exchange |
+| Hybrid P2P KEM (`quantumbft/p2p/conn`) | 🚀 **MAJOR** | SecretConnection P2P kini menggunakan hybrid Kyber1024 + X25519 KEM via HKDF |
+| Custom AnteHandler `ZytherionSigVerificationGasConsumer` | 🐛 **FIXED** | Custom SigGasConsumer di `app/app.go` mengatasi panic `unrecognized public key type: *dilithium5.PubKey` |
+| Gzip Proto Descriptor (`Descriptor()`) | 🐛 **FIXED** | Generasi raw `FileDescriptorProto` gzip bytes di `dilithium5.PubKey` & `kyber1024.PublicKey` untuk validasi `Any` & `unknownproto` |
+| Protobuf Architecture Alignment (`x/*`) | 🚀 **MAJOR** | Migrasi total custom modules (`x/stablecoin`, `x/oracle`, `x/ibc-collateral`) ke skema Protobuf `.proto` resmi dengan `MsgServer` & `msgservice` registration |
+| Revert Security Bypass (`unknown_fields.go`) | 🔒 **SECURITY** | Revert total keamanan `cosmos-sdk/codec/unknownproto/unknown_fields.go` ke standar Cosmos SDK v0.47.13 asli |
+| Zero-Config Distributed TFHE Sharding | 📐 **ARCH** | Deterministic hash-based placement dengan auto-discovery validator via `StakingKeeper`—tiap node otomatis hanya menyimpan file shard jatahnya |
+| REST HTTP Query Endpoint `tfhe-result` | 🆕 **NEW** | Endpoint HTTP REST `/zytherion/privacy/v1/tfhe/result/{commitment_hash_hex}` untuk rekonstruksi ciphertext via gRPC Gateway |
+| Default Key-Type `dilithium5` | ⚡ **ENHANCED** | `zytheriond keys add <name>` kini secara otomatis menggunakan `dilithium5` tanpa flag `--key-type` |
+| CLI `zytheriond keys kyber` | 🆕 **NEW** | Subcommands `keygen`, `encapsulate`, `decapsulate`, `encrypt-file`, `decrypt-file` |
+| TFHE Buffer Sizing (512KB) | 🐛 **FIXED** | Menaikkan `CiphertextMaxBytes` dari 32KB → 512KB di Rust (`lib.rs`) & Go (`erasure.go`) memecahkan error `Rust returned -1` |
+| CLI `mint-zytd` Expiration Height | 🐛 **FIXED** | Menambahkan `--expiration-block-height` flag pada transaksi `x/stablecoin` |
+| LegacyAmino Dilithium5 Registration | 🐛 **FIXED** | Memperbaiki panic `--gas auto` / `Simulate()` (`Cannot encode unregistered concrete type dilithium5.PubKey`) dengan mendaftarkan Dilithium5 ke LegacyAmino `amino.go` |
+
+---
 
 ### v0.6 — QuantumBFT Consensus Engine (2026)
 
@@ -37,6 +60,23 @@ Proyek ini dimulai sebagai eksplorasi kriptografi terapan dan berkembang menjadi
 | `quantum_validator_state.json` | 🆕 **NEW** | Double-sign protection state tracker khusus QuantumBFT |
 | CLI `quantumbft` | 🆕 **NEW** | Subcommands `zytheriond quantumbft (init/show/validate)` untuk manajemen kunci validator |
 | Startup Detection | 🆕 **NEW** | Node otomatis mendeteksi `quantum_validator_key.json` saat startup dan mengaktifkan QuantumBFT |
+
+---
+
+### ⚠️ Catatan Arsitektur: Jembatan Kompatibilitas Ed25519 & Dilithium5 (Jujur & Transparan)
+
+**Mengapa Paket `Ed25519` Masih Disediakan Sebagai Compatibility Bridge?**
+
+1. **Cosmos SDK Type-Switch Constraint (`FromCmtPubKeyInterface`)**:
+   Fungsi internal `FromCmtPubKeyInterface` pada Cosmos SDK v0.47 menggunakan *hardcoded type-switch* (`case ed25519.PubKey`, `case secp256k1.PubKey`, `case sr25519.PubKey`). Tanpa tersedianya tipe kunci `ed25519` pada registri type-switch dan parameter `PubKeyTypes` validator di `x/staking`, proses pembentukan genesis `zytheriond init` / `ignite gentx` melempar panic runtime:
+   `failed to execute message: got: ed25519, expected: [dilithium5]: validator pubkey type is not supported`.
+
+2. **Scaffolding Tooling (`ignite chain serve`)**:
+   Ignite CLI membentuk transaksi pembuat validator awal (`MsgCreateValidator` di transaksi `gentx`) secara otomatis menggunakan skema pubkey `ed25519`.
+
+3. **Strategi Kunci Dual-Layer (Dual-Layer Key Strategy)**:
+   - **Genesis Setup & CLI Bridge (`ed25519`)**: Digunakan sebagai jembatan kompatibilitas protobuf `Any` Cosmos SDK saat transaksi `gentx` diajukan pada fase `init`.
+   - **Mesin Konsensus Post-Quantum (`dilithium5`)**: Begitu node memasuki runtime konsensus (`zytheriond start`), modul `./quantumbft` mengeksekusi penandatanganan proposal blok dan vote validator menggunakan **CRYSTALS-Dilithium5 (ML-DSA-87, NIST Category 5, ~256-bit PQ Security)**.
 
 ---
 
@@ -811,7 +851,7 @@ zytherion/
 | Phase 5c | v0.5.2 | 2026 | ✅ Done | **Security Patch: CVE-001 + CVE-002** |
 | Phase 5d | v0.5.3 | 2026 | ✅ Done | **TFHE Always-On + API Status Endpoint** |
 | Phase 6 | v0.6 | 2026 | ✅ Done | **QuantumBFT: Post-Quantum Consensus Signing (Dilithium5)** |
-| Phase 7 | v0.7 | Q1 2027 | 📅 Planned | IBC Privacy Bridge, ZK infrastructure prep |
+| Phase 7 | v0.7 | 2026 | ✅ Done | **Quantum-Only Mandate & CRYSTALS-Kyber1024 (ML-KEM) + Hybrid KEM P2P** |
 | Phase 8 | v0.8 | Q2 2027 | 📅 Planned | ZK Range Proofs, full amount privacy, threshold re-enc |
 | Phase 9 | v1.0 | 2027 | 🎯 Target | Mainnet launch |
 

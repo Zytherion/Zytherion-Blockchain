@@ -3,6 +3,8 @@ package types
 import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/msgservice"
 )
 
 // RegisterCodec registers the module's concrete message types on the legacy
@@ -12,10 +14,15 @@ func RegisterCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgUnlockCollateral{}, "ibccollateral/UnlockCollateral", nil)
 }
 
-// RegisterInterfaces is a no-op for ibc-collateral — messages are Amino-routed only.
-// RegisterImplementations requires v2 proto-generated types; our manual structs
-// do NOT have a protoreflect descriptor, so calling it would panic at startup.
-func RegisterInterfaces(_ cdctypes.InterfaceRegistry) {}
+// RegisterInterfaces registers ibc-collateral message types with the interface registry.
+func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+	registry.RegisterImplementations(
+		(*sdk.Msg)(nil),
+		&MsgLockCollateral{},
+		&MsgUnlockCollateral{},
+	)
+	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)
+}
 
 var (
 	// Amino is the legacy amino codec instance shared across the module.

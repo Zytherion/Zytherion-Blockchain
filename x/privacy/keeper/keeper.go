@@ -20,11 +20,12 @@ import (
 
 type (
 	Keeper struct {
-		cdc        codec.BinaryCodec
-		storeKey   storetypes.StoreKey
-		memKey     storetypes.StoreKey
-		paramstore paramtypes.Subspace
-		bankKeeper types.BankKeeper
+		cdc           codec.BinaryCodec
+		storeKey      storetypes.StoreKey
+		memKey        storetypes.StoreKey
+		paramstore    paramtypes.Subspace
+		bankKeeper    types.BankKeeper
+		stakingKeeper types.StakingKeeper
 
 		// shardStore manages local disk storage of TFHE ciphertext shards.
 		shardStore *tfhe.ShardStore
@@ -295,4 +296,24 @@ func (k Keeper) DecrTFHEQuota(ctx sdk.Context, addr sdk.AccAddress) {
 	if cur > 0 {
 		k.setTFHEQuota(ctx, addr, cur-1)
 	}
+}
+
+// SetStakingKeeper attaches the staking keeper to enable auto-discovery of validator monikers for shard distribution.
+func (k *Keeper) SetStakingKeeper(sk types.StakingKeeper) {
+	k.stakingKeeper = sk
+}
+
+// GetValidatorMonikers returns the monikers of all active validators in the network.
+func (k Keeper) GetValidatorMonikers(ctx sdk.Context) []string {
+	if k.stakingKeeper == nil {
+		return nil
+	}
+	vals := k.stakingKeeper.GetAllValidators(ctx)
+	var monikers []string
+	for _, val := range vals {
+		if val.Description.Moniker != "" {
+			monikers = append(monikers, val.Description.Moniker)
+		}
+	}
+	return monikers
 }

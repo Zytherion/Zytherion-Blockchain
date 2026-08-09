@@ -29,19 +29,20 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
-	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 )
 
 // hkdfDomainSeparator is the HKDF info string that domain-separates Dilithium5
 // keys from secp256k1 keys derived from the same mnemonic.
 const hkdfDomainSeparator = "zytherion/dilithium5/v1"
 
-// Dilithium5Algo is the keyring.SignatureAlgo for Dilithium5 keys.
+// Dilithium5Algo is the signature algorithm for Dilithium5 keys.
 // Register it with the keyring to enable:
 //
 //	zytheriond keys add alice --key-type dilithium5
 //	zytheriond keys add alice --key-type dilithium5 --recover  (mnemonic recovery)
-var Dilithium5Algo keyring.SignatureAlgo = dilithium5Algo{}
+var Dilithium5Algo dilithium5Algo = dilithium5Algo{}
+
+
 
 // Expose methods on the concrete type for testing without the interface.
 type dilithium5Algo struct{}

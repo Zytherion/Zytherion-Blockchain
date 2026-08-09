@@ -2,6 +2,8 @@ package dilithium5
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 
 	"github.com/cloudflare/circl/sign/dilithium/mode5"
@@ -28,6 +30,39 @@ func (pk *PubKey) Address() cryptotypes.Address {
 		return nil
 	}
 	return cmtcrypto.AddressHash(pk.Key)
+}
+
+// MarshalJSON implements json.Marshaler.
+// Cosmos SDK's TxJSONDecoder expects PubKey to be JSON-marshalable
+// with the protobuf JSON convention: {"key": "<base64>"}
+func (pk *PubKey) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Key []byte `json:"key"`
+	}{Key: pk.Key})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+// Decodes {"key": "<base64>"} as produced by MarshalJSON and gogoproto jsonpb.
+func (pk *PubKey) UnmarshalJSON(bz []byte) error {
+	// First try struct form {"key": "<base64>"}
+	var aux struct {
+		Key []byte `json:"key"`
+	}
+	if err := json.Unmarshal(bz, &aux); err == nil && len(aux.Key) > 0 {
+		pk.Key = aux.Key
+		return nil
+	}
+	// Fallback: try raw base64 string
+	var b64 string
+	if err := json.Unmarshal(bz, &b64); err == nil {
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return fmt.Errorf("dilithium5.PubKey.UnmarshalJSON: invalid base64: %w", err)
+		}
+		pk.Key = raw
+		return nil
+	}
+	return fmt.Errorf("dilithium5.PubKey.UnmarshalJSON: cannot decode")
 }
 
 // Bytes returns the raw 2592-byte Dilithium5 public key.
@@ -107,6 +142,34 @@ func (sk *PrivKey) Equals(other cryptotypes.LedgerPrivKey) bool {
 		return false
 	}
 	return bytes.Equal(sk.Key, other.Bytes())
+}
+
+// MarshalJSON implements json.Marshaler for PrivKey.
+func (sk *PrivKey) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Key []byte `json:"key"`
+	}{Key: sk.Key})
+}
+
+// UnmarshalJSON implements json.Unmarshaler for PrivKey.
+func (sk *PrivKey) UnmarshalJSON(bz []byte) error {
+	var aux struct {
+		Key []byte `json:"key"`
+	}
+	if err := json.Unmarshal(bz, &aux); err == nil && len(aux.Key) > 0 {
+		sk.Key = aux.Key
+		return nil
+	}
+	var b64 string
+	if err := json.Unmarshal(bz, &b64); err == nil {
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return fmt.Errorf("dilithium5.PrivKey.UnmarshalJSON: invalid base64: %w", err)
+		}
+		sk.Key = raw
+		return nil
+	}
+	return fmt.Errorf("dilithium5.PrivKey.UnmarshalJSON: cannot decode")
 }
 
 // Type returns the key algorithm identifier.
